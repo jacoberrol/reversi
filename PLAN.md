@@ -165,8 +165,9 @@ tamper-proof.
   pending invites/player). Auth and rate-limit are two separate seams applied in sequence.
 
 **Roadmap (ordering matters — extract first):**
-- 🔮 **Stage A — Extract `netplay-{protocol,server,client}`.** `Color`→`Seat`, opaque `Game` payload.
-  Behavior-preserving; adapt the existing relay + protocol tests.
+- ✅ **Stage A — Extract `netplay-{protocol,server,client}`.** `Color`→`Seat`, opaque `Game(Vec<u8>)`
+  payload; Reversi keeps `GameMsg` (in `app::game_msg`) + seat↔player mapping. Behavior-preserving;
+  relay + protocol tests pass adapted; offscreen renders unchanged.
 - 🔮 **Stage B — Auth seam.** `Authenticator`/`AuthProvider`, versioned credential in `Hello`,
   `SharedTokenAuth` with a key-id'd token set. Thin `Identity`.
 - 🔮 **Stage C — Rate limiting.** Handshake timeout, per-IP caps, per-connection message bucket,
@@ -238,3 +239,6 @@ Record notable plan/scope changes here so the "why" survives.
 - 2026-07-18 — Added **Stage 8** (netplay extraction + hardening): reusable `netplay-*` crates with a
   `Seat`/opaque-payload boundary, an auth seam (versioned token), rate limiting, then TLS+WebSocket
   (folds in the old deploy increment) and attestation later. Planned only; not started.
+- 2026-07-18 — Stage 8A done: extracted `netplay-{protocol,server,client}` from `protocol`/`server`/
+  `net.rs`. Game-agnostic (`Seat`, opaque `Game(Vec<u8>)`); Reversi's `GameMsg` moves to `app::game_msg`.
+  Behavior-preserving (relay + protocol tests pass). `just serve` now runs `netplay-server`.

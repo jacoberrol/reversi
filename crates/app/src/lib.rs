@@ -9,13 +9,14 @@
 pub mod anim;
 pub mod egui_layer;
 pub mod game;
+pub mod game_msg;
 pub mod gpu;
 pub mod lobby;
-pub mod net;
 pub mod session;
 
 use std::sync::Arc;
 
+use netplay_client::NetEvent;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, KeyEvent, MouseButton, WindowEvent};
@@ -24,7 +25,6 @@ use winit::keyboard::Key;
 use winit::window::{Window, WindowId};
 
 use gpu::WindowState;
-use net::NetEvent;
 
 /// How the app was launched.
 enum Launch {
@@ -54,7 +54,7 @@ impl ApplicationHandler<NetEvent> for App {
         let mut state = WindowState::new(window);
 
         if let Launch::Network { addr, name } = &self.launch {
-            match net::connect(addr, name, self.proxy.clone()) {
+            match netplay_client::connect(addr, name, self.proxy.clone()) {
                 Ok(handle) => state.enter_network(handle, name.clone()),
                 Err(e) => {
                     state.set_net_error(name.clone(), format!("could not connect to {addr}: {e}"))

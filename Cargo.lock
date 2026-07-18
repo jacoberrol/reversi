@@ -80,9 +80,12 @@ dependencies = [
  "eval",
  "game-core",
  "image",
+ "netplay-client",
+ "netplay-protocol",
  "pollster",
- "protocol",
  "render",
+ "serde",
+ "serde_json",
  "wgpu",
  "winit",
 ]
@@ -1089,6 +1092,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "netplay-client"
+version = "0.1.0"
+dependencies = [
+ "netplay-protocol",
+ "winit",
+]
+
+[[package]]
+name = "netplay-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "netplay-server"
+version = "0.1.0"
+dependencies = [
+ "netplay-protocol",
+ "tokio",
+]
+
+[[package]]
 name = "nohash-hasher"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1499,14 +1526,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d595e54a326bc53c1c197b32d295e14b169e3cfeaa8dc82b529f947fba6bcf5"
 
 [[package]]
-name = "protocol"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "pxfm"
 version = "0.1.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1732,14 +1751,6 @@ dependencies = [
  "serde",
  "serde_core",
  "zmij",
-]
-
-[[package]]
-name = "server"
-version = "0.1.0"
-dependencies = [
- "protocol",
- "tokio",
 ]
 
 [[package]]

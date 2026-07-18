@@ -1,7 +1,7 @@
 //! The multiplayer lobby: presence/invite state and the themed egui UI.
 
 use egui::{Align, Align2, Color32, Frame, Id, Layout, Margin, RichText, Rounding, Sense, Stroke};
-use protocol::{PlayerId, PlayerInfo};
+use netplay_protocol::{PlayerId, PlayerInfo};
 
 /// What the player did in the lobby this frame.
 pub enum LobbyAction {

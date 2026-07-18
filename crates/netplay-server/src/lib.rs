@@ -1,24 +1,22 @@
-//! Reversi relay server library.
+//! Reusable relay/matchmaking server library.
 //!
-//! [`serve`] accepts client connections, auto-pairs the first two waiting
-//! players, and relays their in-game messages. Each connection is a tokio task;
+//! [`serve`] accepts client connections, runs a lobby (presence + invites), and
+//! relays paired players' opaque game payloads. Each connection is a tokio task;
 //! a per-player writer task drains an outbox channel to the socket, and the
-//! [`lobby`] task owns all matchmaking state. Splitting this from the binary
-//! lets integration tests drive a real server on an ephemeral port.
+//! [`lobby`] task owns all matchmaking state. Game-agnostic — it never decodes
+//! the payload. Splitting this from the binary lets integration tests drive a
+//! real server on an ephemeral port.
 
 pub mod lobby;
 
 use std::io;
 
 use lobby::LobbyCmd;
-use protocol::{ClientMsg, ServerMsg, PROTOCOL_VERSION};
+use netplay_protocol::{ClientMsg, ServerMsg, MAX_FRAME, PROTOCOL_VERSION};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, oneshot};
-
-/// Reject frames larger than this (messages are tiny).
-const MAX_FRAME: usize = 1 << 16;
 
 /// Accept and serve connections on `listener` until it errors fatally. Runs the
 /// lobby task internally; never returns under normal operation.
@@ -89,10 +87,7 @@ async fn handle(stream: TcpStream, lobby_tx: mpsc::Sender<LobbyCmd>) -> io::Resu
                 decliner: id,
                 inviter,
             },
-            ClientMsg::Game(game) => LobbyCmd::Relay {
-                from: id,
-                msg: game,
-            },
+            ClientMsg::Game(payload) => LobbyCmd::Relay { from: id, payload },
             ClientMsg::Hello { .. } => continue, // ignore a stray second Hello
         };
         if lobby_tx.send(cmd).await.is_err() {
@@ -107,7 +102,11 @@ async fn handle(stream: TcpStream, lobby_tx: mpsc::Sender<LobbyCmd>) -> io::Resu
 /// Drain outgoing messages to the socket as length-delimited frames.
 async fn writer(mut write_half: OwnedWriteHalf, mut rx: mpsc::Receiver<ServerMsg>) {
     while let Some(msg) = rx.recv().await {
-        if write_half.write_all(&protocol::encode(&msg)).await.is_err() {
+        if write_half
+            .write_all(&netplay_protocol::encode(&msg))
+            .await
+            .is_err()
+        {
             break;
         }
     }
@@ -130,7 +129,7 @@ async fn read_client(read_half: &mut OwnedReadHalf) -> io::Result<Option<ClientM
     }
     let mut body = vec![0u8; len];
     read_half.read_exact(&mut body).await?;
-    protocol::decode::<ClientMsg>(&body)
+    netplay_protocol::decode::<ClientMsg>(&body)
         .map(Some)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }

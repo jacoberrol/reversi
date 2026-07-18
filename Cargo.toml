@@ -5,8 +5,9 @@ members = [
     "crates/eval",
     "crates/render",
     "crates/app",
-    "crates/protocol",
-    "crates/server",
+    "crates/netplay-protocol",
+    "crates/netplay-server",
+    "crates/netplay-client",
 ]
 
 # Metadata shared by every crate in the workspace. Individual crates inherit
@@ -22,11 +23,16 @@ license = "MIT OR Apache-2.0"
 game-core = { path = "crates/game-core" }
 eval = { path = "crates/eval" }
 render = { path = "crates/render" }
-protocol = { path = "crates/protocol" }
 
-# Networking (Stage 7). The wire protocol is shared by the client and the relay
-# server via serde. tokio is used by the server only — the client stays
-# async-free (blocking TCP on a background thread).
+# Reusable netplay layer (Stage 8): a game-agnostic transport + lobby + relay.
+# The protocol carries an opaque game payload the server never decodes; the
+# Reversi app defines its own `GameMsg` and rides it inside that payload.
+netplay-protocol = { path = "crates/netplay-protocol" }
+netplay-client = { path = "crates/netplay-client" }
+
+# Networking. serde encodes the wire protocol (and the app's game payload).
+# tokio is used by the server only — the client stays async-free (blocking TCP
+# on a background thread).
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "sync", "macros"] }

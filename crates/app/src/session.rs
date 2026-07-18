@@ -7,13 +7,13 @@
 use std::time::Instant;
 
 use game_core::{Board, Outcome, Square};
-use protocol::GameMsg;
+use netplay_client::{NetEvent, NetHandle};
 use render::board_view::{PieceAnim, View};
 
 use crate::anim::Animator;
 use crate::game::Game;
+use crate::game_msg::{self, GameMsg};
 use crate::lobby::{LobbyAction, LobbyState};
-use crate::net::{self, NetEvent, NetHandle};
 
 /// Which screen is showing.
 pub enum Screen {
@@ -131,7 +131,7 @@ impl Session {
         self.animator.clear();
         self.game.restart();
         if let Some(net) = &mut self.net {
-            net.send(GameMsg::Restart);
+            net.game(game_msg::encode(&GameMsg::Restart));
         }
     }
 
@@ -160,7 +160,7 @@ impl Session {
         if self.net.is_some() {
             let square = sq.index() as u8;
             if let Some(net) = &mut self.net {
-                net.send(GameMsg::Move { square });
+                net.game(game_msg::encode(&GameMsg::Move { square }));
             }
         }
         self.animator.push(transitions);
@@ -184,8 +184,8 @@ impl Session {
             NetEvent::InviteDeclined { .. } => {
                 self.lobby.status = "Invite declined".to_string();
             }
-            NetEvent::Matched { color, opponent } => {
-                self.game.set_local(net::player_of(color));
+            NetEvent::Matched { seat, opponent } => {
+                self.game.set_local(game_msg::player_of(seat));
                 self.game.restart();
                 self.animator.clear();
                 self.opponent = opponent;
@@ -193,18 +193,24 @@ impl Session {
                 self.lobby.incoming = None;
                 self.screen = Screen::InGame;
             }
-            NetEvent::Remote(GameMsg::Move { square }) => {
-                if let Some(sq) = Square::from_index(square as usize) {
-                    if let Some(transitions) = self.game.apply_remote_move(sq) {
-                        self.animator.push(transitions);
+            NetEvent::Game(payload) => match game_msg::decode(&payload) {
+                Some(GameMsg::Move { square }) => {
+                    if let Some(sq) = Square::from_index(square as usize) {
+                        if let Some(transitions) = self.game.apply_remote_move(sq) {
+                            self.animator.push(transitions);
+                        }
                     }
                 }
-            }
-            NetEvent::Remote(GameMsg::Restart) => {
-                self.animator.clear();
-                self.game.restart();
-            }
-            NetEvent::Remote(GameMsg::Resign) | NetEvent::OpponentLeft => {
+                Some(GameMsg::Restart) => {
+                    self.animator.clear();
+                    self.game.restart();
+                }
+                Some(GameMsg::Resign) => {
+                    self.ended = Some(EndReason::OpponentLeft);
+                }
+                None => {} // ignore a malformed payload
+            },
+            NetEvent::OpponentLeft => {
                 self.ended = Some(EndReason::OpponentLeft);
             }
             NetEvent::Disconnected => {

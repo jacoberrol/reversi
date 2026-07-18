@@ -5,7 +5,7 @@
 use std::io::Cursor;
 
 use app::lobby::{self, LobbyAction, LobbyState};
-use protocol::PlayerInfo;
+use netplay_protocol::PlayerInfo;
 
 const WIDTH: u32 = 720;
 const HEIGHT: u32 = 900;

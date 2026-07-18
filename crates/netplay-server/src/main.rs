@@ -1,4 +1,4 @@
-//! Reversi relay server binary. Binds an address and serves connections.
+//! Netplay relay server binary. Binds an address and serves connections.
 
 use tokio::net::TcpListener;
 
@@ -10,6 +10,6 @@ async fn main() {
     let listener = TcpListener::bind(&addr)
         .await
         .unwrap_or_else(|e| panic!("failed to bind {addr}: {e}"));
-    println!("reversi relay listening on {addr}");
-    server::serve(listener).await;
+    println!("netplay relay listening on {addr}");
+    netplay_server::serve(listener).await;
 }

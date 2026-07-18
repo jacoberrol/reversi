@@ -7,10 +7,10 @@
 
 use std::collections::HashMap;
 
-use protocol::{Color, GameMsg, PlayerInfo, ServerMsg};
+use netplay_protocol::{PlayerInfo, Seat, ServerMsg};
 use tokio::sync::{mpsc, oneshot};
 
-pub use protocol::PlayerId;
+pub use netplay_protocol::PlayerId;
 
 /// Commands sent to the lobby by connection tasks.
 pub enum LobbyCmd {
@@ -33,7 +33,7 @@ pub enum LobbyCmd {
     },
     Relay {
         from: PlayerId,
-        msg: GameMsg,
+        payload: Vec<u8>,
     },
     Leave {
         id: PlayerId,
@@ -104,9 +104,9 @@ impl Lobby {
                 }
             }
 
-            LobbyCmd::Relay { from, msg } => {
+            LobbyCmd::Relay { from, payload } => {
                 if let Some(partner) = self.players.get(&from).and_then(|p| p.partner) {
-                    self.send(partner, ServerMsg::Game(msg)).await;
+                    self.send(partner, ServerMsg::Game(payload)).await;
                 }
             }
 
@@ -142,7 +142,7 @@ impl Lobby {
         self.send(
             inviter,
             ServerMsg::Matched {
-                your_color: Color::Black,
+                seat: Seat(0),
                 opponent: accepter_name,
             },
         )
@@ -150,12 +150,12 @@ impl Lobby {
         self.send(
             accepter,
             ServerMsg::Matched {
-                your_color: Color::White,
+                seat: Seat(1),
                 opponent: inviter_name,
             },
         )
         .await;
-        println!("matched {inviter} (black) vs {accepter} (white)");
+        println!("matched {inviter} (seat 0) vs {accepter} (seat 1)");
         self.broadcast_presence().await;
     }
 

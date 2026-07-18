@@ -73,21 +73,23 @@ architecture and the road to internet play.
 ## Project layout
 
 A Cargo workspace with a strict, one-directional dependency graph
-(`app → {render, eval, protocol} → game-core`; `server → protocol`; never the reverse):
+(`app → {render, eval, netplay-protocol, netplay-client} → game-core`;
+`netplay-{server,client} → netplay-protocol`; never the reverse):
 
 | Crate | Responsibility | Depends on |
 |---|---|---|
 | `crates/game-core` | Board, rules, move generation, search. **Pure** (std only, no I/O). | — |
 | `crates/eval` | Position evaluation (heuristics now, ML later) behind a trait. | game-core |
 | `crates/render` | `wgpu` sprite/quad batcher and board geometry. No game logic. | game-core |
-| `crates/protocol` | Multiplayer wire format (serde). Primitive types only. | — |
-| `crates/app` | `winit` shell + input + client networking + `egui` lobby; the only crate that touches windowing. | render, eval, protocol, game-core |
-| `crates/server` | Relay/matchmaking server (`tokio`). Relays messages opaquely. | protocol |
+| `crates/netplay-protocol` | Game-agnostic wire format (serde): framing, lobby/match envelope, **opaque game payload**. | — |
+| `crates/netplay-client` | Reusable client transport (blocking TCP → winit events). | netplay-protocol |
+| `crates/netplay-server` | Reusable relay/matchmaking server (`tokio`). Relays the payload opaquely. | netplay-protocol |
+| `crates/app` | `winit` shell + input + `egui` lobby; defines the Reversi `GameMsg`; the only crate that touches windowing. | render, eval, netplay-*, game-core |
 
 Keeping `game-core` and `eval` pure means the rules and AI are fully testable with
-`cargo test` alone; I/O and async live only in `app` (client, async-free) and `server`
-(tokio). The eventual iOS port is confined to the input/windowing layer in `app` (see the
-`PointerInput` note in DESIGN §8), and the networking is transport-swappable (DESIGN §9).
+`cargo test` alone; I/O and async live only in `netplay-client` (async-free) and
+`netplay-server` (tokio). The netplay layer is game-agnostic (any 2-player turn-based game can
+use it), and the transport is swappable (DESIGN §9).
 
 ## Development workflow
 
