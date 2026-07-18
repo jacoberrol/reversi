@@ -30,18 +30,18 @@ demo:
     #!/usr/bin/env bash
     set -euo pipefail
     addr="127.0.0.1:5099"
-    echo "building…"
+    echo "building..."
     cargo build -q -p server -p app
-    ./target/debug/server "$addr" &
+    ./target/debug/server "${addr}" &
     server_pid=$!
-    trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+    trap 'kill "${server_pid}" 2>/dev/null || true' EXIT
     sleep 1
-    echo "opening two windows (Alice, Bob) against $addr…"
-    ./target/debug/app --server "$addr" --name Alice &
+    echo "opening two windows (Alice, Bob) against ${addr}"
+    ./target/debug/app --server "${addr}" --name Alice &
     alice=$!
-    ./target/debug/app --server "$addr" --name Bob &
+    ./target/debug/app --server "${addr}" --name Bob &
     bob=$!
-    wait "$alice" "$bob"
+    wait "${alice}" "${bob}"
 
 # Pre-commit gate: formatting must be clean and clippy must be warning-free.
 # `-D warnings` promotes every clippy lint to an error. Must pass before commit.
