@@ -4,7 +4,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-# wgpu sprite batcher and atlas loading. Kept thin — no game logic. Reads
-# game-core state to draw it. wgpu/image deps arrive in Stage 4.
+# wgpu sprite/quad batcher and offscreen frame capture. Reads game-core state to
+# draw it; no game logic. `image` is used only to encode the offscreen PNG.
 [dependencies]
 game-core.workspace = true
+wgpu.workspace = true
+bytemuck.workspace = true
+pollster.workspace = true
+image.workspace = true

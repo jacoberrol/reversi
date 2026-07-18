@@ -31,9 +31,8 @@ matchup DEEP="3" SHALLOW="1" GAMES="50":
     cargo run -q -p eval --example matchup --release -- {{DEEP}} {{SHALLOW}} {{GAMES}}
 
 # Render one frame offscreen to target/frame.png, for inspecting visual output.
-# Wired to a real offscreen renderer in Stage 4.
 frame:
-    @echo "frame: not implemented yet (arrives in Stage 4)."
+    cargo run -q -p render --example frame
 
 # Rebuild the texture atlas from assets/src/ via the Aseprite CLI.
 # Wired to the real Aseprite pipeline in a later stage.

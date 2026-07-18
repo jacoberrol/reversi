@@ -1,6 +1,12 @@
-//! Rendering: a thin wgpu sprite/quad batcher and atlas loading.
+//! Rendering: a thin wgpu quad batcher and offscreen frame capture.
 //!
 //! No game logic lives here — the renderer reads `game-core` state and draws it.
-//! Keeping this crate free of rules keeps both sides independently testable.
+//! Textures are stubbed for now; v1 is solid-colour quads and procedural discs.
 
-// Stage 4 fills this in with wgpu setup and the instanced-quad batcher.
+pub mod board_view;
+pub mod offscreen;
+mod quad;
+mod renderer;
+
+pub use quad::Instance;
+pub use renderer::Renderer;
