@@ -112,10 +112,24 @@ stands up the **real relay topology** on localhost so it isn't throwaway. See DE
   identical to game end); server binary boots/binds/accepts. `just run` (single-player) + two
   `just play` windows (localhost) is the interactive test.
 
+### Stage 7 — Increment 2 (named presence + invite lobby, egui) ✅
+- ✅ Adopted **egui** for on-screen UI (evaluated custom-vs-egui via themed mockups; chose egui,
+  themed to a non-"windowy" game look). `egui` + `egui-wgpu` on wgpu 0.20; no `egui-winit` (winit
+  version clash) — pointer input hand-fed. See DESIGN §9.
+- ✅ Protocol: player identity + presence + invites (`PlayerInfo`, `Invite`/`Accept`/`Decline`,
+  `Presence`/`Invited`/`InviteDeclined`). Server lobby rewritten: tracks all players, broadcasts
+  presence, forwards invites, pairs on accept. Auto-match retired.
+- ✅ Client: `app` refactored to lib+bin; new `egui_layer` (live egui) + `lobby` (themed UI, state,
+  actions); `session` gained a Lobby/InGame screen state machine; `gpu` routes rendering + input by
+  screen. Lobby → invite/accept → in-game (reusing the same board render + animator).
+- ✅ Verify: protocol round-trips; **relay integration test** rewritten for the invite flow (connect →
+  presence → invite → accept → relay → disconnect); `just lobby-frame` renders the real lobby UI
+  offscreen (reviewed). `just demo` (two windows) is the live invite-and-play test.
+
 ### Stage 7 — later increments 🔮
-- 🔮 Increment 2: named presence + invite (lobby UI; first on-screen text renderer).
 - 🔮 Increment 3: deploy the server to a cloud VM — add TLS, swap TCP→WebSocket behind the
   connection seam (reusing `protocol`). Out of scope now: accounts/auth, reconnect, spectating, NAT.
+- 🔮 In-app name entry + a graphical main menu (name is a CLI arg for now); in-game egui HUD.
 
 ## Backlog / future (post-Stage 7) 🔮
 - 🔮 **Search: move ordering** in alpha-beta (try corners / high-mobility / previous-best moves first, or
@@ -162,3 +176,7 @@ Record notable plan/scope changes here so the "why" survives.
   `server` (tokio relay, auto-match) crates; client gains a network mode over blocking TCP + winit user
   events, staying async-free. Real relay topology (client→server) chosen so internet-later reuses it.
   Session/net logic factored into `session.rs`. Verified headless (relay + sync tests). See DESIGN §9.
+- 2026-07-18 — Stage 7 Increment 2: named presence + invite lobby. Adopted egui (themed to a game look)
+  for on-screen UI after a custom-vs-egui mockup bake-off. Protocol gains presence/invites; server lobby
+  rewritten; `app` refactored to lib+bin with a Lobby/InGame screen state machine. `PointerInput` seam
+  folded into `WindowState`. Verified via the invite-flow relay test + offscreen lobby render.

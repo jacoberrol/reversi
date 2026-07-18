@@ -1,8 +1,8 @@
-//! Game session state and logic, independent of wgpu/windowing.
+//! Game/lobby session state, independent of wgpu/windowing.
 //!
-//! Owns the [`Game`], the [`Animator`], and (in network mode) the connection.
-//! `gpu::WindowState` delegates input, network events, and per-frame render
-//! inputs here, so all the mode-aware rules live in one place.
+//! Owns the current [`Screen`], the [`Game`] + [`Animator`], and (in network
+//! mode) the connection and lobby state. `gpu::WindowState` delegates input,
+//! network events, and per-frame render inputs here.
 
 use std::time::Instant;
 
@@ -12,40 +12,66 @@ use render::board_view::{PieceAnim, View};
 
 use crate::anim::Animator;
 use crate::game::Game;
+use crate::lobby::{LobbyAction, LobbyState};
 use crate::net::{self, NetEvent, NetHandle};
 
-/// Network connection status, shown in the title bar.
-enum NetStatus {
-    Waiting,
-    Playing,
+/// Which screen is showing.
+pub enum Screen {
+    Lobby,
+    InGame,
+}
+
+/// Why an in-progress network game ended (frozen board, message in the title).
+enum EndReason {
     OpponentLeft,
     Disconnected,
     Error(String),
 }
 
-/// Present only in network mode.
-struct NetState {
-    /// `None` if the connection failed at startup.
-    handle: Option<NetHandle>,
-    status: NetStatus,
-    opponent: String,
-}
-
-/// The playable game plus its animator and optional network connection.
 pub struct Session {
+    screen: Screen,
     game: Game,
     animator: Animator,
-    net: Option<NetState>,
+    /// The connection write handle (network mode). `None` = single-player, or a
+    /// failed connection.
+    net: Option<NetHandle>,
+    opponent: String,
+    ended: Option<EndReason>,
+    lobby: LobbyState,
 }
 
 impl Session {
-    /// A local single-player session (vs the AI).
+    /// A local single-player session (vs the AI), straight into the game.
     pub fn new() -> Self {
         Self {
+            screen: Screen::InGame,
             game: Game::new(),
             animator: Animator::default(),
             net: None,
+            opponent: String::new(),
+            ended: None,
+            lobby: LobbyState::default(),
         }
+    }
+
+    /// Enter network mode: connected, showing the lobby.
+    pub fn enter_network(&mut self, handle: NetHandle, name: String) {
+        self.net = Some(handle);
+        self.screen = Screen::Lobby;
+        self.lobby.me = name;
+        self.lobby.status = "Waiting for others to join\u{2026}".to_string();
+    }
+
+    /// Enter network mode already failed (couldn't connect).
+    pub fn set_net_error(&mut self, name: String, message: String) {
+        self.net = None;
+        self.screen = Screen::Lobby;
+        self.lobby.me = name;
+        self.lobby.status = format!("Error: {message}");
+    }
+
+    pub fn is_lobby(&self) -> bool {
+        matches!(self.screen, Screen::Lobby)
     }
 
     pub fn is_network(&self) -> bool {
@@ -56,28 +82,37 @@ impl Session {
         self.animator.is_active()
     }
 
-    /// Enter network mode with a live connection (waiting to be matched).
-    pub fn enter_network(&mut self, handle: NetHandle) {
-        self.net = Some(NetState {
-            handle: Some(handle),
-            status: NetStatus::Waiting,
-            opponent: String::new(),
-        });
+    pub fn lobby_state(&self) -> &LobbyState {
+        &self.lobby
     }
 
-    /// Enter network mode already failed (couldn't connect).
-    pub fn set_net_error(&mut self, message: String) {
-        self.net = Some(NetState {
-            handle: None,
-            status: NetStatus::Error(message),
-            opponent: String::new(),
-        });
+    /// Act on a lobby button press.
+    pub fn lobby_action(&mut self, action: LobbyAction) {
+        match action {
+            LobbyAction::Invite(id) => {
+                if let Some(net) = &mut self.net {
+                    net.invite(id);
+                }
+                self.lobby.status = "Invite sent\u{2026}".to_string();
+            }
+            LobbyAction::Accept(id) => {
+                if let Some(net) = &mut self.net {
+                    net.accept(id);
+                }
+                self.lobby.incoming = None;
+            }
+            LobbyAction::Decline(id) => {
+                if let Some(net) = &mut self.net {
+                    net.decline(id);
+                }
+                self.lobby.incoming = None;
+            }
+        }
     }
 
     pub fn set_difficulty_index(&mut self, index: usize) -> bool {
-        // Difficulty is meaningless in network mode (no AI).
         if self.net.is_some() {
-            return false;
+            return false; // no AI in network mode
         }
         match crate::game::Difficulty::from_index(index) {
             Some(difficulty) => {
@@ -88,28 +123,23 @@ impl Session {
         }
     }
 
-    /// Start a new game. In network mode, also tell the opponent.
+    /// Start a new game (in-game only). In network mode, tell the opponent.
     pub fn restart(&mut self) {
+        if self.is_lobby() || self.ended.is_some() {
+            return;
+        }
         self.animator.clear();
         self.game.restart();
         if let Some(net) = &mut self.net {
-            if let Some(handle) = &mut net.handle {
-                handle.send(GameMsg::Restart);
-            }
-            net.status = NetStatus::Playing;
+            net.send(GameMsg::Restart);
         }
     }
 
-    /// Handle a click on board square `sq`. Returns whether something changed.
+    /// Handle a click on board square `sq` (in-game). Returns whether something
+    /// changed.
     pub fn click_square(&mut self, sq: Square) -> bool {
-        if self.animator.is_active() {
+        if self.is_lobby() || self.ended.is_some() || self.animator.is_active() {
             return false;
-        }
-        // In network mode, only interact once matched.
-        if let Some(net) = &self.net {
-            if !matches!(net.status, NetStatus::Playing) {
-                return false;
-            }
         }
         if self.game.is_over() {
             self.restart();
@@ -127,31 +157,41 @@ impl Session {
         if transitions.is_empty() {
             return false;
         }
-
         if self.net.is_some() {
             let square = sq.index() as u8;
             if let Some(net) = &mut self.net {
-                if let Some(handle) = &mut net.handle {
-                    handle.send(GameMsg::Move { square });
-                }
+                net.send(GameMsg::Move { square });
             }
         }
         self.animator.push(transitions);
         true
     }
 
-    /// Apply a message from the network. Returns whether a redraw is needed.
+    /// Apply a network event. Returns whether a redraw is needed.
     pub fn on_net_event(&mut self, event: NetEvent) -> bool {
-        if self.net.is_none() {
-            return false;
-        }
         match event {
+            NetEvent::Presence(players) => {
+                self.lobby.players = players;
+                self.lobby.status = if self.lobby.players.is_empty() {
+                    "Waiting for others to join\u{2026}".to_string()
+                } else {
+                    String::new()
+                };
+            }
+            NetEvent::Invited { from, name } => {
+                self.lobby.incoming = Some((from, name));
+            }
+            NetEvent::InviteDeclined { .. } => {
+                self.lobby.status = "Invite declined".to_string();
+            }
             NetEvent::Matched { color, opponent } => {
                 self.game.set_local(net::player_of(color));
-                if let Some(net) = &mut self.net {
-                    net.status = NetStatus::Playing;
-                    net.opponent = opponent;
-                }
+                self.game.restart();
+                self.animator.clear();
+                self.opponent = opponent;
+                self.ended = None;
+                self.lobby.incoming = None;
+                self.screen = Screen::InGame;
             }
             NetEvent::Remote(GameMsg::Move { square }) => {
                 if let Some(sq) = Square::from_index(square as usize) {
@@ -165,25 +205,27 @@ impl Session {
                 self.game.restart();
             }
             NetEvent::Remote(GameMsg::Resign) | NetEvent::OpponentLeft => {
-                if let Some(net) = &mut self.net {
-                    net.status = NetStatus::OpponentLeft;
-                }
+                self.ended = Some(EndReason::OpponentLeft);
             }
             NetEvent::Disconnected => {
-                if let Some(net) = &mut self.net {
-                    net.status = NetStatus::Disconnected;
+                if self.is_lobby() {
+                    self.lobby.status = "Disconnected".to_string();
+                } else {
+                    self.ended = Some(EndReason::Disconnected);
                 }
             }
             NetEvent::Error(message) => {
-                if let Some(net) = &mut self.net {
-                    net.status = NetStatus::Error(message);
+                if self.is_lobby() {
+                    self.lobby.status = format!("Error: {message}");
+                } else {
+                    self.ended = Some(EndReason::Error(message));
                 }
             }
         }
         true
     }
 
-    /// The board and disc animations to draw this frame.
+    /// The board and disc animations to draw this frame (in-game).
     pub fn frame(&mut self, now: Instant) -> (Board, Vec<PieceAnim>) {
         match self.animator.frame(now) {
             Some((board, anims)) => (board, anims),
@@ -191,26 +233,33 @@ impl Session {
         }
     }
 
-    /// The non-board draw settings for this frame.
+    /// The non-board draw settings for this frame (in-game).
     pub fn view(&self, animating: bool) -> View {
-        let can_play = self
-            .net
-            .as_ref()
-            .is_none_or(|net| matches!(net.status, NetStatus::Playing));
         View {
-            show_hints: !animating && can_play && self.game.awaiting_local(),
+            show_hints: !animating && self.ended.is_none() && self.game.awaiting_local(),
             show_controls: self.net.is_none(),
             selected_difficulty: self.game.difficulty().index(),
             outcome: if animating { None } else { self.game.outcome() },
         }
     }
 
-    /// The window title reflecting the current state (our stand-in for on-screen
-    /// text until a glyph renderer exists).
+    /// The window title reflecting the current state.
     pub fn title(&self) -> String {
-        match &self.net {
-            None => self.single_player_title(),
-            Some(net) => self.network_title(net),
+        if self.is_lobby() {
+            return "Reversi \u{2014} Lobby".to_string();
+        }
+        if let Some(reason) = &self.ended {
+            let message = match reason {
+                EndReason::OpponentLeft => "Opponent left".to_string(),
+                EndReason::Disconnected => "Disconnected".to_string(),
+                EndReason::Error(e) => format!("Error: {e}"),
+            };
+            return format!("Reversi \u{2014} {message}");
+        }
+        if self.net.is_some() {
+            self.network_title()
+        } else {
+            self.single_player_title()
         }
     }
 
@@ -234,11 +283,10 @@ impl Session {
         )
     }
 
-    fn network_title(&self, net: &NetState) -> String {
+    fn network_title(&self) -> String {
         let (me, opp) = self.game.score();
-        let status = match &net.status {
-            NetStatus::Waiting => "Waiting for opponent\u{2026}".to_string(),
-            NetStatus::Playing if self.game.is_over() => match self.game.outcome() {
+        let status = if self.game.is_over() {
+            match self.game.outcome() {
                 Some(Outcome::Win(p)) if p == self.game.local() => {
                     format!("You win {me}\u{2013}{opp} \u{00b7} click board for a new game")
                 }
@@ -246,25 +294,20 @@ impl Session {
                     format!("You lose {opp}\u{2013}{me} \u{00b7} click board for a new game")
                 }
                 _ => format!("Draw {me}\u{2013}{opp} \u{00b7} click board for a new game"),
-            },
-            NetStatus::Playing if self.game.awaiting_local() => "Your move".to_string(),
-            NetStatus::Playing => "Opponent's move".to_string(),
-            NetStatus::OpponentLeft => "Opponent left".to_string(),
-            NetStatus::Disconnected => "Disconnected".to_string(),
-            NetStatus::Error(message) => format!("Error: {message}"),
+            }
+        } else if self.game.awaiting_local() {
+            "Your move".to_string()
+        } else {
+            "Opponent's move".to_string()
         };
         let side = match self.game.local() {
             game_core::Player::Black => "Black",
             game_core::Player::White => "White",
         };
-        if matches!(net.status, NetStatus::Playing) {
-            format!(
-                "Reversi \u{2014} {status} \u{00b7} You are {side} vs {}",
-                net.opponent
-            )
-        } else {
-            format!("Reversi \u{2014} {status}")
-        }
+        format!(
+            "Reversi \u{2014} {status} \u{00b7} You are {side} vs {}",
+            self.opponent
+        )
     }
 }
 

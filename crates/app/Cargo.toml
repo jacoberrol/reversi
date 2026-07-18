@@ -13,4 +13,10 @@ render.workspace = true
 protocol.workspace = true
 wgpu.workspace = true
 winit.workspace = true
+egui.workspace = true
+egui-wgpu.workspace = true
 pollster.workspace = true
+
+[dev-dependencies]
+# For the offscreen lobby-mockup example (`just lobby-frame`) PNG readback.
+image.workspace = true

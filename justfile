@@ -24,8 +24,9 @@ play ADDR="127.0.0.1:5000" NAME="Player":
     cargo run -p app -- --server {{ADDR}} --name {{NAME}}
 
 # Stops the server automatically when both windows close (or on Ctrl-C). Uses
-# port 5099 to avoid clashing with a manual `just serve`.
-# One-shot local multiplayer test: a relay plus two auto-matched client windows.
+# port 5099 to avoid clashing with a manual `just serve`. In one window click
+# Invite next to the other player; in the other, click Accept.
+# One-shot local multiplayer test: a relay plus two lobby windows.
 demo:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -62,6 +63,10 @@ matchup DEEP="3" SHALLOW="1" GAMES="50":
 # Render one frame offscreen to target/frame.png, for inspecting visual output.
 frame:
     cargo run -q -p render --example frame
+
+# Render the egui lobby mockup offscreen to target/lobby.png (look-and-feel spike).
+lobby-frame:
+    cargo run -q -p app --example lobby_frame
 
 # Rebuild the texture atlas from assets/src/ via the Aseprite CLI.
 # Wired to the real Aseprite pipeline in a later stage.

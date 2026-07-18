@@ -1,44 +1,56 @@
 //! The lobby: a single task that owns all matchmaking state.
 //!
 //! Modeled as an actor — every connection sends [`LobbyCmd`]s over a channel and
-//! the lobby processes them one at a time, so there are no locks and no shared
-//! mutable state. It holds at most one waiting player; the next arrival is paired
-//! with them.
+//! the lobby processes them one at a time, so there are no locks. It tracks all
+//! connected players, broadcasts presence to those not in a game, forwards
+//! invites, and pairs players who accept.
 
 use std::collections::HashMap;
 
-use protocol::{Color, GameMsg, ServerMsg};
+use protocol::{Color, GameMsg, PlayerInfo, ServerMsg};
 use tokio::sync::{mpsc, oneshot};
 
-/// Identifies a connected player for the lifetime of its connection.
-pub type PlayerId = u64;
+pub use protocol::PlayerId;
 
 /// Commands sent to the lobby by connection tasks.
 pub enum LobbyCmd {
-    /// A client finished its handshake and wants a match. `reply` returns its id.
     Join {
         name: String,
         outbox: mpsc::Sender<ServerMsg>,
         reply: oneshot::Sender<PlayerId>,
     },
-    /// Forward an in-game message from `from` to its opponent.
-    Relay { from: PlayerId, msg: GameMsg },
-    /// A connection ended; notify any opponent and clean up.
-    Leave { id: PlayerId },
+    Invite {
+        from: PlayerId,
+        to: PlayerId,
+    },
+    Accept {
+        accepter: PlayerId,
+        inviter: PlayerId,
+    },
+    Decline {
+        decliner: PlayerId,
+        inviter: PlayerId,
+    },
+    Relay {
+        from: PlayerId,
+        msg: GameMsg,
+    },
+    Leave {
+        id: PlayerId,
+    },
 }
 
-struct Waiting {
-    id: PlayerId,
+struct Player {
     name: String,
     outbox: mpsc::Sender<ServerMsg>,
+    /// The opponent's id while in a game, else `None` (available in the lobby).
+    partner: Option<PlayerId>,
 }
 
 #[derive(Default)]
 struct Lobby {
     next_id: PlayerId,
-    waiting: Option<Waiting>,
-    outboxes: HashMap<PlayerId, mpsc::Sender<ServerMsg>>,
-    partners: HashMap<PlayerId, PlayerId>,
+    players: HashMap<PlayerId, Player>,
 }
 
 /// Run the lobby until every connection has dropped its command sender.
@@ -59,58 +71,125 @@ impl Lobby {
             } => {
                 let id = self.next_id;
                 self.next_id += 1;
-                self.outboxes.insert(id, outbox.clone());
+                self.players.insert(
+                    id,
+                    Player {
+                        name,
+                        outbox,
+                        partner: None,
+                    },
+                );
                 let _ = reply.send(id);
+                println!("player {id} joined");
+                self.broadcast_presence().await;
+            }
 
-                match self.waiting.take() {
-                    // Pair with the waiting player: they are Black (joined first),
-                    // the newcomer is White.
-                    Some(waiting) => {
-                        self.partners.insert(waiting.id, id);
-                        self.partners.insert(id, waiting.id);
-                        let _ = waiting
-                            .outbox
-                            .send(ServerMsg::Matched {
-                                your_color: Color::Black,
-                                opponent: name,
-                            })
-                            .await;
-                        let _ = outbox
-                            .send(ServerMsg::Matched {
-                                your_color: Color::White,
-                                opponent: waiting.name,
-                            })
-                            .await;
-                        println!("matched {} (black) vs {} (white)", waiting.id, id);
-                    }
-                    None => {
-                        self.waiting = Some(Waiting { id, name, outbox });
-                        println!("player {id} waiting for an opponent");
-                    }
+            LobbyCmd::Invite { from, to } => {
+                if self.is_available(from) && self.is_available(to) {
+                    let name = self.players[&from].name.clone();
+                    self.send(to, ServerMsg::Invited { from, name }).await;
+                }
+            }
+
+            LobbyCmd::Accept { accepter, inviter } => {
+                if self.is_available(accepter) && self.is_available(inviter) {
+                    self.start_match(inviter, accepter).await;
+                }
+            }
+
+            LobbyCmd::Decline { decliner, inviter } => {
+                if self.is_available(inviter) {
+                    self.send(inviter, ServerMsg::InviteDeclined { by: decliner })
+                        .await;
                 }
             }
 
             LobbyCmd::Relay { from, msg } => {
-                if let Some(&partner) = self.partners.get(&from) {
-                    if let Some(outbox) = self.outboxes.get(&partner) {
-                        let _ = outbox.send(ServerMsg::Game(msg)).await;
-                    }
+                if let Some(partner) = self.players.get(&from).and_then(|p| p.partner) {
+                    self.send(partner, ServerMsg::Game(msg)).await;
                 }
             }
 
             LobbyCmd::Leave { id } => {
-                self.outboxes.remove(&id);
-                if self.waiting.as_ref().map(|w| w.id) == Some(id) {
-                    self.waiting = None;
-                }
-                if let Some(partner) = self.partners.remove(&id) {
-                    self.partners.remove(&partner);
-                    if let Some(outbox) = self.outboxes.get(&partner) {
-                        let _ = outbox.send(ServerMsg::OpponentLeft).await;
+                if let Some(player) = self.players.remove(&id) {
+                    if let Some(partner) = player.partner {
+                        if let Some(p) = self.players.get_mut(&partner) {
+                            p.partner = None;
+                        }
+                        self.send(partner, ServerMsg::OpponentLeft).await;
                     }
-                    println!("player {id} left; notified {partner}");
+                    println!("player {id} left");
+                    self.broadcast_presence().await;
                 }
             }
+        }
+    }
+
+    fn is_available(&self, id: PlayerId) -> bool {
+        self.players.get(&id).is_some_and(|p| p.partner.is_none())
+    }
+
+    /// Pair two available players. The inviter plays Black (moves first).
+    async fn start_match(&mut self, inviter: PlayerId, accepter: PlayerId) {
+        let inviter_name = self.players[&inviter].name.clone();
+        let accepter_name = self.players[&accepter].name.clone();
+        if let Some(p) = self.players.get_mut(&inviter) {
+            p.partner = Some(accepter);
+        }
+        if let Some(p) = self.players.get_mut(&accepter) {
+            p.partner = Some(inviter);
+        }
+        self.send(
+            inviter,
+            ServerMsg::Matched {
+                your_color: Color::Black,
+                opponent: accepter_name,
+            },
+        )
+        .await;
+        self.send(
+            accepter,
+            ServerMsg::Matched {
+                your_color: Color::White,
+                opponent: inviter_name,
+            },
+        )
+        .await;
+        println!("matched {inviter} (black) vs {accepter} (white)");
+        self.broadcast_presence().await;
+    }
+
+    async fn send(&self, id: PlayerId, msg: ServerMsg) {
+        if let Some(player) = self.players.get(&id) {
+            let _ = player.outbox.send(msg).await;
+        }
+    }
+
+    /// Send every available player the list of the *other* available players.
+    async fn broadcast_presence(&self) {
+        let available: Vec<(PlayerId, PlayerInfo)> = self
+            .players
+            .iter()
+            .filter(|(_, p)| p.partner.is_none())
+            .map(|(&id, p)| {
+                (
+                    id,
+                    PlayerInfo {
+                        id,
+                        name: p.name.clone(),
+                    },
+                )
+            })
+            .collect();
+
+        for (recipient, _) in &available {
+            let others = available
+                .iter()
+                .filter(|(id, _)| id != recipient)
+                .map(|(_, info)| info.clone())
+                .collect();
+            self.send(*recipient, ServerMsg::Presence { players: others })
+                .await;
         }
     }
 }
