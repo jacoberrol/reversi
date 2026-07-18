@@ -23,6 +23,26 @@ serve ADDR="127.0.0.1:5000":
 play ADDR="127.0.0.1:5000" NAME="Player":
     cargo run -p app -- --server {{ADDR}} --name {{NAME}}
 
+# Stops the server automatically when both windows close (or on Ctrl-C). Uses
+# port 5099 to avoid clashing with a manual `just serve`.
+# One-shot local multiplayer test: a relay plus two auto-matched client windows.
+demo:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    addr="127.0.0.1:5099"
+    echo "building…"
+    cargo build -q -p server -p app
+    ./target/debug/server "$addr" &
+    server_pid=$!
+    trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+    sleep 1
+    echo "opening two windows (Alice, Bob) against $addr…"
+    ./target/debug/app --server "$addr" --name Alice &
+    alice=$!
+    ./target/debug/app --server "$addr" --name Bob &
+    bob=$!
+    wait "$alice" "$bob"
+
 # Pre-commit gate: formatting must be clean and clippy must be warning-free.
 # `-D warnings` promotes every clippy lint to an error. Must pass before commit.
 check:
