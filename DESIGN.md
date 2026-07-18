@@ -1,11 +1,11 @@
-# Puzzle Game — Design & Architecture Decisions
+# Reversi — Design & Architecture Decisions
 
 > Living document. Started from initial planning session, July 2026.
 > Purpose: capture the decisions made so far, the reasoning behind them, and the open questions.
 
 ## 1. Project intent
 
-- A 2D, puzzle-forward game. Gameplay concept TBD (Othello/Reversi-like board mechanics are one candidate direction).
+- **The game is Reversi (Othello).** A 2D, two-player abstract-strategy board game on an 8×8 grid: players place discs to flank lines of the opponent's discs and flip them; when neither side has a legal move the game ends and the player with more discs wins. The initial target is single-player vs. an AI opponent, where search depth is the difficulty setting. (This was previously open; it is now a commitment — see §8.)
 - **This is primarily a learning vehicle.** The goal is to understand the full stack: modern GPU rendering, the Apple Silicon architecture (unified memory, GPU, Neural Engine), on-device ML, and an AI-assisted asset pipeline. Decisions below are biased toward "learn how it works" over "ship fastest."
 - Developed in VS Code, with Claude Code as the agentic assistant.
 
@@ -17,7 +17,7 @@
 | iOS | Later port | wgpu runs on the same Metal backend as macOS; low-friction port |
 | Android | Later port | wgpu via Vulkan (GLES fallback); expect winit lifecycle/surface-loss work |
 
-Mobile porting notes for later: `aarch64-apple-ios` target + Xcode signing for iOS; NDK + `cargo-ndk` / `cargo-mobile2` / `xbuild` for Android. Design for touch input from day one (puzzle games suit this). Escape hatch if raw plumbing stops being fun: port to Bevy (same wgpu underneath, mobile problems pre-solved).
+Mobile porting notes for later: `aarch64-apple-ios` target + Xcode signing for iOS; NDK + `cargo-ndk` / `cargo-mobile2` / `xbuild` for Android. Design for touch input from day one (turn-based board games suit this). Escape hatch if raw plumbing stops being fun: port to Bevy (same wgpu underneath, mobile problems pre-solved).
 
 ## 3. Language & graphics stack
 
@@ -42,11 +42,17 @@ Core crates (initial): `wgpu`, `winit`, `image` (PNG decode), `asefile` (load As
 
 ## 5. ML plans
 
-- **In-game ML (portable):** small models — puzzle difficulty evaluator, level generator, policy net for an opponent — implemented via `burn` on the wgpu backend. Ships to all platforms with the game.
+- **In-game ML (portable):** small models — a learned position evaluator and/or an opponent policy net — implemented via `burn` on the wgpu backend, slotting in behind the same evaluator trait as the handcrafted heuristic. Ships to all platforms with the game. (Difficulty is search depth, so a "difficulty model" isn't needed; Reversi has no procedural levels, so the earlier level-generator idea is dropped.)
 - **ANE / Core ML:** treated as an **optional side experiment**, not a load-bearing dependency. If pursued: a small self-contained Swift or Python sidecar. (Android has no ANE; its equivalent is NNAPI/LiteRT — different stack.)
 - **MLX:** for local training experiments on the Mac, including possible LoRA training (see §6). Python-first; lives outside the game binary.
 
 ## 6. Asset pipeline (2D sprites)
+
+> **Deferred past the first iteration.** v1 ships with **procedural graphics only**
+> (solid quads + shader-drawn discs — see §7 and §8). This whole sprite-generation
+> pipeline is a later-iteration learning goal, not v1 work; it stays documented here
+> so the batcher/atlas abstraction is designed to absorb it, but nothing below is built
+> until the game is fun with procedural art.
 
 Five stages, all local:
 
@@ -77,15 +83,20 @@ Draw Things exposes JavaScript batch automation and an MCP server usable from Cl
 ## 7. Development principles
 
 - **Desktop-first**, port to mobile after the game exists.
-- **Programmer art first.** Solid-color quads until the puzzle is fun; the atlas/batcher abstraction absorbs real art later without code changes.
+- **Programmer art first.** Solid-color quads until the game is fun; the atlas/batcher abstraction absorbs real art later without code changes.
 - Build the raw winit/wgpu plumbing to learn it; Bevy remains the acknowledged escape hatch.
 - Keep the ANE/Core ML work quarantined from the core game.
 
-## 8. Open questions
+## 8. Decisions & open questions
 
-- [ ] The actual puzzle mechanic (Othello-like is a candidate, not a commitment)
+### Decided
+- **Game mechanic: Reversi (Othello), 8×8.** Previously the biggest open question; now committed (see §1).
+- **Game state: plain structs, no ECS.** Reversi's fixed 8×8 board carries too little entity variety to justify an ECS; plain structs keep `game-core` dependency-free and trivially unit-testable. (No Bevy either — see §7.)
+- **First iteration: procedural graphics only.** Solid-color quads and shader-drawn discs; the diffusion/Aseprite sprite pipeline (§6) is deferred until the game is fun. The atlas/batcher abstraction is still built so real art drops in later without code changes.
+- **Input via a `PointerInput` abstraction, for portability.** Platform events are normalized in `app` to one internal `PointerInput` (a board-space point + a press/release phase): winit `MouseInput`/`CursorMoved` on macOS today, winit `Touch` on iOS later. `app` hit-tests that point to a `Square` using board geometry exposed by `render` (the inverse of the draw layout); `game-core` only ever receives a `Square` and stays input-agnostic. Net effect: the macOS→iOS port is confined to the thin event-normalization layer in `app` — rules, eval, and rendering are untouched. (Honors the "touch from day one" intent in §2.)
+
+### Still open
 - [ ] Art direction: pixel art vs. HD/vector-ish procedural look (affects LoRA choice and atlas resolution)
-- [ ] ECS or plain structs for game state? (puzzle scope may not need an ECS)
 - [ ] Audio stack (e.g. `kira`, `rodio`) — undecided
-- [ ] What the first ML experiment should be (difficulty evaluator vs. level generator)
+- [ ] First ML experiment: a learned evaluator to augment/replace the handcrafted heuristic, vs. an opponent policy net
 - [ ] Distribution/licensing check before shipping any Flux.1 Dev-derived asset
