@@ -38,11 +38,48 @@ pub struct PlayerInfo {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Seat(pub u8);
 
+/// The reference authorization scheme's credential: a versioned shared token.
+/// `key_id` selects which key the server checks against, so keys can rotate
+/// (old + new coexist during rollout). This is the credential *format* both the
+/// client provider and the server's authenticator agree on; the relay itself
+/// treats the credential as opaque bytes (see [`ClientMsg::Hello`]).
+///
+/// Threat model: a client cannot keep a secret — this deters anonymous clients,
+/// it is not tamper-proofing. Real closure comes from attestation later, behind
+/// the same seam.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SharedTokenCredential {
+    pub key_id: u16,
+    pub token: String,
+}
+
+impl SharedTokenCredential {
+    pub fn to_bytes(&self) -> Vec<u8> {
+        serde_json::to_vec(self).expect("credential always serializes")
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        serde_json::from_slice(bytes).ok()
+    }
+}
+
+/// Development key id / token. A convenience default so `just serve`/`just play`
+/// work out of the box; **override in production** (the server injects real keys,
+/// the app ships its own token).
+pub const DEV_KEY_ID: u16 = 1;
+pub const DEV_TOKEN: &str = "reversi-dev-token";
+
 /// A message from a client to the server.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ClientMsg {
-    /// First message on connect: the player's display name and protocol version.
-    Hello { name: String, protocol: u16 },
+    /// First message on connect: the player's display name, protocol version,
+    /// and an **opaque authorization credential** the server's authenticator
+    /// interprets (the relay never decodes it — same discipline as `Game`).
+    Hello {
+        name: String,
+        protocol: u16,
+        credential: Vec<u8>,
+    },
     /// Invite another player (by id) to a game.
     Invite { to: PlayerId },
     /// Accept an invite from `inviter`.
@@ -131,6 +168,11 @@ mod tests {
         round_trip_client(ClientMsg::Hello {
             name: "Jake".into(),
             protocol: PROTOCOL_VERSION,
+            credential: SharedTokenCredential {
+                key_id: DEV_KEY_ID,
+                token: DEV_TOKEN.into(),
+            }
+            .to_bytes(),
         });
         round_trip_client(ClientMsg::Invite { to: 7 });
         round_trip_client(ClientMsg::Accept { inviter: 7 });
@@ -179,5 +221,18 @@ mod tests {
     fn clean_eof_returns_none() {
         let mut empty = Cursor::new(Vec::new());
         assert!(read_frame(&mut empty).unwrap().is_none());
+    }
+
+    #[test]
+    fn shared_token_credential_round_trips() {
+        let cred = SharedTokenCredential {
+            key_id: 3,
+            token: "abc".into(),
+        };
+        assert_eq!(
+            SharedTokenCredential::from_bytes(&cred.to_bytes()),
+            Some(cred)
+        );
+        assert_eq!(SharedTokenCredential::from_bytes(b"not json"), None);
     }
 }

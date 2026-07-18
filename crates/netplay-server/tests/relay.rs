@@ -3,21 +3,39 @@
 //! the relay, and see a disconnect notification. No GUI, so it runs in CI.
 
 use std::net::{SocketAddr, TcpStream};
+use std::sync::Arc;
 
-use netplay_protocol::{ClientMsg, PlayerId, Seat, ServerMsg, PROTOCOL_VERSION};
+use netplay_protocol::{
+    ClientMsg, PlayerId, Seat, ServerMsg, SharedTokenCredential, DEV_KEY_ID, DEV_TOKEN,
+    PROTOCOL_VERSION,
+};
+use netplay_server::auth::SharedTokenAuth;
 use tokio::net::TcpListener;
 
-fn connect(addr: SocketAddr, name: &str) -> TcpStream {
+fn dev_credential() -> Vec<u8> {
+    SharedTokenCredential {
+        key_id: DEV_KEY_ID,
+        token: DEV_TOKEN.to_string(),
+    }
+    .to_bytes()
+}
+
+fn connect_with(addr: SocketAddr, name: &str, credential: Vec<u8>) -> TcpStream {
     let mut stream = TcpStream::connect(addr).expect("connect");
     netplay_protocol::write_msg(
         &mut stream,
         &ClientMsg::Hello {
             name: name.to_string(),
             protocol: PROTOCOL_VERSION,
+            credential,
         },
     )
     .expect("send hello");
     stream
+}
+
+fn connect(addr: SocketAddr, name: &str) -> TcpStream {
+    connect_with(addr, name, dev_credential())
 }
 
 fn recv(stream: &mut TcpStream) -> ServerMsg {
@@ -40,15 +58,34 @@ fn wait_for_presence(stream: &mut TcpStream) -> Vec<PlayerId> {
     }
 }
 
-#[tokio::test]
-async fn invite_accept_relays_and_reports_disconnect() {
+async fn start_server() -> SocketAddr {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    tokio::spawn(netplay_server::serve(listener));
+    tokio::spawn(netplay_server::serve(
+        listener,
+        Arc::new(SharedTokenAuth::dev()),
+    ));
+    addr
+}
 
+#[tokio::test]
+async fn invite_accept_relays_and_reports_disconnect() {
+    let addr = start_server().await;
     tokio::task::spawn_blocking(move || scenario(addr))
         .await
         .expect("scenario task");
+}
+
+#[tokio::test]
+async fn rejects_a_bad_credential() {
+    let addr = start_server().await;
+    tokio::task::spawn_blocking(move || {
+        let mut stream = connect_with(addr, "Mallory", b"garbage".to_vec());
+        // The server sends an Error and closes.
+        assert!(matches!(recv(&mut stream), ServerMsg::Error(_)));
+    })
+    .await
+    .expect("bad-credential task");
 }
 
 fn scenario(addr: SocketAddr) {

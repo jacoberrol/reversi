@@ -168,8 +168,9 @@ tamper-proof.
 - ✅ **Stage A — Extract `netplay-{protocol,server,client}`.** `Color`→`Seat`, opaque `Game(Vec<u8>)`
   payload; Reversi keeps `GameMsg` (in `app::game_msg`) + seat↔player mapping. Behavior-preserving;
   relay + protocol tests pass adapted; offscreen renders unchanged.
-- 🔮 **Stage B — Auth seam.** `Authenticator`/`AuthProvider`, versioned credential in `Hello`,
-  `SharedTokenAuth` with a key-id'd token set. Thin `Identity`.
+- ✅ **Stage B — Auth seam.** Server `Authenticator::verify` (before Join) + client `AuthProvider`;
+  `Hello` carries an opaque credential; `SharedTokenAuth`/`SharedToken` (key-id'd token, `NETPLAY_TOKENS`
+  env or dev default) behind the seam. Thin `Identity`. Rejection tested end-to-end.
 - 🔮 **Stage C — Rate limiting.** Handshake timeout, per-IP caps, per-connection message bucket,
   lobby caps. Drop + log.
 - 🔮 **Stage D — TLS + WebSocket transport swap** (executes DESIGN §9; the old "deploy" increment).
@@ -242,3 +243,6 @@ Record notable plan/scope changes here so the "why" survives.
 - 2026-07-18 — Stage 8A done: extracted `netplay-{protocol,server,client}` from `protocol`/`server`/
   `net.rs`. Game-agnostic (`Seat`, opaque `Game(Vec<u8>)`); Reversi's `GameMsg` moves to `app::game_msg`.
   Behavior-preserving (relay + protocol tests pass). `just serve` now runs `netplay-server`.
+- 2026-07-18 — Stage 8B done: client authorization seam. `Authenticator`/`AuthProvider` traits;
+  `Hello` carries an opaque credential; `SharedTokenAuth`/`SharedToken` reference impl (versioned token,
+  `NETPLAY_TOKENS` env or dev default). Server rejects bad credentials before Join (tested).

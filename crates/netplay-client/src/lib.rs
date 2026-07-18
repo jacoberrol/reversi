@@ -12,8 +12,44 @@ use std::io::{self, Write};
 use std::net::TcpStream;
 use std::thread;
 
-use netplay_protocol::{ClientMsg, PlayerId, PlayerInfo, Seat, ServerMsg, PROTOCOL_VERSION};
+use netplay_protocol::{
+    ClientMsg, PlayerId, PlayerInfo, Seat, ServerMsg, SharedTokenCredential, DEV_KEY_ID, DEV_TOKEN,
+    PROTOCOL_VERSION,
+};
 use winit::event_loop::EventLoopProxy;
+
+/// Supplies the opaque authorization credential sent in the handshake. A baked
+/// token lives behind this now; a platform-attestation provider can replace it
+/// later without touching [`connect`].
+pub trait AuthProvider {
+    fn credential(&self) -> Vec<u8>;
+}
+
+/// Reference provider: a versioned shared token.
+pub struct SharedToken {
+    pub key_id: u16,
+    pub token: String,
+}
+
+impl SharedToken {
+    /// The development default (matches the server's `SharedTokenAuth::dev`).
+    pub fn dev() -> Self {
+        Self {
+            key_id: DEV_KEY_ID,
+            token: DEV_TOKEN.to_string(),
+        }
+    }
+}
+
+impl AuthProvider for SharedToken {
+    fn credential(&self) -> Vec<u8> {
+        SharedTokenCredential {
+            key_id: self.key_id,
+            token: self.token.clone(),
+        }
+        .to_bytes()
+    }
+}
 
 /// A message from the network, injected into the winit event loop as a user
 /// event.
@@ -70,9 +106,15 @@ impl NetHandle {
     }
 }
 
-/// Connect to `addr`, send the handshake, and spawn the read thread. Returns the
-/// write handle; incoming messages arrive as [`NetEvent`]s on `proxy`.
-pub fn connect(addr: &str, name: &str, proxy: EventLoopProxy<NetEvent>) -> io::Result<NetHandle> {
+/// Connect to `addr`, send the handshake (with `auth`'s credential), and spawn
+/// the read thread. Returns the write handle; incoming messages arrive as
+/// [`NetEvent`]s on `proxy`.
+pub fn connect(
+    addr: &str,
+    name: &str,
+    auth: &impl AuthProvider,
+    proxy: EventLoopProxy<NetEvent>,
+) -> io::Result<NetHandle> {
     let read_half = TcpStream::connect(addr)?;
     let mut writer = read_half.try_clone()?;
 
@@ -81,6 +123,7 @@ pub fn connect(addr: &str, name: &str, proxy: EventLoopProxy<NetEvent>) -> io::R
         &ClientMsg::Hello {
             name: name.to_string(),
             protocol: PROTOCOL_VERSION,
+            credential: auth.credential(),
         },
     )?;
     writer.flush()?;
