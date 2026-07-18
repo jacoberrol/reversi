@@ -12,8 +12,9 @@ use std::sync::Arc;
 
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
-use winit::event::{ElementState, MouseButton, WindowEvent};
+use winit::event::{ElementState, KeyEvent, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::keyboard::Key;
 use winit::window::{Window, WindowId};
 
 use gpu::WindowState;
@@ -35,7 +36,7 @@ impl ApplicationHandler for App {
         }
         let attributes = Window::default_attributes()
             .with_title("Reversi")
-            .with_inner_size(LogicalSize::new(640.0, 640.0));
+            .with_inner_size(LogicalSize::new(640.0, 720.0));
         let window = Arc::new(
             event_loop
                 .create_window(attributes)
@@ -73,6 +74,33 @@ impl ApplicationHandler for App {
                 };
                 let [x, y] = state.cursor();
                 if state.handle_pointer(PointerInput { x, y, phase }) {
+                    state.request_redraw();
+                }
+            }
+
+            // Keyboard shortcuts: R restarts, 1-4 pick difficulty (mirrors the
+            // on-screen buttons).
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        logical_key: Key::Character(s),
+                        state: ElementState::Pressed,
+                        ..
+                    },
+                ..
+            } => {
+                let changed = match s.as_str() {
+                    "r" | "R" => {
+                        state.restart();
+                        true
+                    }
+                    "1" => state.set_difficulty_index(0),
+                    "2" => state.set_difficulty_index(1),
+                    "3" => state.set_difficulty_index(2),
+                    "4" => state.set_difficulty_index(3),
+                    _ => false,
+                };
+                if changed {
                     state.request_redraw();
                 }
             }

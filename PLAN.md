@@ -69,9 +69,20 @@ Pure Rust, std only, no panics in the public API (invalid squares / illegal move
 > Depth note: bumped the AI from the originally-planned depth 3 to **depth 6** (`app::game::AI_DEPTH`).
 > The Stage-3 benchmark showed depth 6 is ~0.2s worst case on this hardware — instant and much stronger.
 
-## Backlog / future (post-Stage 4) 🔮
-- 🔮 Game-over UI (winner/score banner) and a restart control — v1 has no end-of-game screen yet
-- 🔮 Difficulty selector mapped to search depth (Easy 2 / Medium 4 / Hard 6 / Expert 7–8)
+### Stage 5 — UI enhancements ✅
+No text renderer yet (textures still stubbed), so text goes in the **window title bar** and interactive
+UI is drawn with quads. A real in-scene glyph renderer stays on the backlog.
+- ✅ **Game-over UI**: dim overlay over the board with the winner's disc; title shows result + score;
+  click the board (or press `R`) to start a new game.
+- ✅ **Difficulty selector**: a row of four quad buttons (increasing bars = Easy/Medium/Hard/Expert →
+  depth 2/4/6/8), selected one highlighted; click (or press `1`–`4`) to set it; applies immediately.
+  Title names the current difficulty. `app::game` gained a `Difficulty` type; depth is no longer a const.
+- ✅ `render::board_view` gained a control strip in the layout, `difficulty_button_at` hit-testing, and a
+  `scene()` composer (board + controls + overlay) shared by the window and `just frame`.
+- ✅ Verify: `just check && just test && just frame` (both PNG scenes reviewed — controls + game-over).
+  `just run` is the interactive test.
+
+## Backlog / future (post-Stage 5) 🔮
 - 🔮 **Search: move ordering** in alpha-beta (try corners / high-mobility / previous-best moves first, or
   order by a shallow pass). Better ordering ⇒ far more pruning ⇒ effectively deeper search at the same cost.
 - 🔮 **Search: exact endgame solver** — once ≤ ~14–16 empties remain, search to the end on exact disc
@@ -106,3 +117,6 @@ Record notable plan/scope changes here so the "why" survives.
 - 2026-07-18 — Stage 4 complete: winit/wgpu window + `render` quad batcher (pinned wgpu 0.20 / winit 0.30).
   `just frame` renders headless to a PNG for self-verification. `PointerInput` input abstraction lands.
   AI default set to depth 6 (instant, per benchmark). First external deps enter the tree.
+- 2026-07-18 — Stage 5 complete: game-over overlay + difficulty selector. No glyph renderer yet, so text
+  lives in the window title; interactive UI is quads. `board_view::scene` now composes board+controls+
+  overlay for both the window and `just frame`. `Difficulty` (Easy/Medium/Hard/Expert → depth 2/4/6/8).
