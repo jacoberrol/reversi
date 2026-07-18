@@ -171,8 +171,9 @@ tamper-proof.
 - ✅ **Stage B — Auth seam.** Server `Authenticator::verify` (before Join) + client `AuthProvider`;
   `Hello` carries an opaque credential; `SharedTokenAuth`/`SharedToken` (key-id'd token, `NETPLAY_TOKENS`
   env or dev default) behind the seam. Thin `Identity`. Rejection tested end-to-end.
-- 🔮 **Stage C — Rate limiting.** Handshake timeout, per-IP caps, per-connection message bucket,
-  lobby caps. Drop + log.
+- ✅ **Stage C — Rate limiting.** Handshake timeout (~5s), per-IP concurrency + new-connection rate
+  (`IpLimiter`), per-connection inbound message bucket, lobby player cap. All tunable `const`s in
+  `netplay-server::limits`; drop + log. (Invite spam is covered by the message bucket.)
 - 🔮 **Stage D — TLS + WebSocket transport swap** (executes DESIGN §9; the old "deploy" increment).
   Makes the token respectable and unblocks internet deploy; payloads unchanged. B and C can land
   before D; D is the prerequisite for calling the token production-respectable.
@@ -246,3 +247,6 @@ Record notable plan/scope changes here so the "why" survives.
 - 2026-07-18 — Stage 8B done: client authorization seam. `Authenticator`/`AuthProvider` traits;
   `Hello` carries an opaque credential; `SharedTokenAuth`/`SharedToken` reference impl (versioned token,
   `NETPLAY_TOKENS` env or dev default). Server rejects bad credentials before Join (tested).
+- 2026-07-18 — Stage 8C done: server-side rate limiting (`netplay-server::limits`). Handshake timeout,
+  per-IP concurrency + connection-rate (`IpLimiter`), per-connection message token bucket, lobby player
+  cap. Drop-and-log; tunable consts. Added tokio `time` feature. Unit-tested.

@@ -141,8 +141,11 @@ can use, split into `netplay-protocol` / `netplay-server` / `netplay-client`. Th
   `Authenticator::verify` runs before the client joins the lobby, the client's `AuthProvider` fills
   the credential. `SharedTokenAuth`/`SharedToken` (versioned token, `NETPLAY_TOKENS` env or dev
   default) is the reference impl; attestation swaps in behind the unchanged trait later. Honest
-  threat model: deterrence, not tamper-proofing (a client can't keep a secret). Rate limiting is
-  next (8C), then TLS+WS (8D).
+  threat model: deterrence, not tamper-proofing (a client can't keep a secret).
+- **Rate limiting (Stage 8C, done).** Server-side, before the lobby, drop-and-log: a handshake
+  timeout, per-IP concurrency + new-connection rate, a per-connection inbound message bucket, and a
+  lobby player cap. Tunable consts in `netplay-server::limits`; auth and rate-limit are separate
+  seams applied in sequence. Next: TLS+WS (8D).
 
 ### UI: egui for menus/lobby (decided)
 On-screen text and the lobby use **egui** (`egui` + `egui-wgpu`, on our wgpu 0.20). We evaluated

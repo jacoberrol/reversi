@@ -8,12 +8,14 @@
 //! real server on an ephemeral port.
 
 pub mod auth;
+pub mod limits;
 pub mod lobby;
 
 use std::io;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use auth::Authenticator;
+use limits::{IpGuard, IpLimiter};
 use lobby::LobbyCmd;
 use netplay_protocol::{ClientMsg, ServerMsg, MAX_FRAME, PROTOCOL_VERSION};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -27,14 +29,23 @@ use tokio::sync::{mpsc, oneshot};
 pub async fn serve(listener: TcpListener, auth: Arc<dyn Authenticator>) {
     let (lobby_tx, lobby_rx) = mpsc::channel(64);
     tokio::spawn(lobby::run(lobby_rx));
+    let limiter = Arc::new(Mutex::new(IpLimiter::new()));
 
     loop {
         match listener.accept().await {
             Ok((stream, peer)) => {
+                let ip = peer.ip();
+                // Per-IP concurrency + new-connection rate, checked at accept.
+                if !limiter.lock().expect("limiter lock").admit(ip) {
+                    eprintln!("rate-limit: rejected connection from {ip}");
+                    continue;
+                }
                 println!("connection from {peer}");
+                let guard = IpGuard::new(limiter.clone(), ip);
                 let lobby_tx = lobby_tx.clone();
                 let auth = auth.clone();
                 tokio::spawn(async move {
+                    let _guard = guard; // releases the IP slot when the task ends
                     if let Err(e) = handle(stream, lobby_tx, auth).await {
                         eprintln!("connection error: {e}");
                     }
@@ -55,8 +66,17 @@ async fn handle(
     let (outbox, out_rx) = mpsc::channel::<ServerMsg>(32);
     tokio::spawn(writer(write_half, out_rx));
 
-    // The first frame must be a version-matching Hello.
-    let (name, credential) = match read_client(&mut read_half).await? {
+    // The first frame must be a version-matching Hello, within the handshake
+    // window (guards against idle/slowloris sockets).
+    let first =
+        match tokio::time::timeout(limits::HANDSHAKE_TIMEOUT, read_client(&mut read_half)).await {
+            Ok(result) => result?,
+            Err(_) => {
+                eprintln!("rate-limit: handshake timed out");
+                return Ok(());
+            }
+        };
+    let (name, credential) = match first {
         Some(ClientMsg::Hello {
             name,
             protocol,
@@ -93,12 +113,22 @@ async fn handle(
         return Ok(());
     }
     let id = match reply_rx.await {
-        Ok(id) => id,
-        Err(_) => return Ok(()),
+        Ok(Some(id)) => id,
+        // Rejected (lobby full) or the lobby is gone.
+        Ok(None) | Err(_) => return Ok(()),
     };
 
-    // Forward the client's lobby/game messages until it disconnects.
+    // Forward the client's lobby/game messages until it disconnects, metering
+    // the inbound rate.
+    let mut inbound = limits::message_bucket();
     while let Some(msg) = read_client(&mut read_half).await? {
+        if !inbound.try_take() {
+            let _ = outbox
+                .send(ServerMsg::Error("rate exceeded".to_string()))
+                .await;
+            eprintln!("rate-limit: message rate exceeded (player {id})");
+            break;
+        }
         let cmd = match msg {
             ClientMsg::Invite { to } => LobbyCmd::Invite { from: id, to },
             ClientMsg::Accept { inviter } => LobbyCmd::Accept {
