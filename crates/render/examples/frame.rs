@@ -38,6 +38,7 @@ fn main() {
     let layout = board_view::layout(WIDTH as f32, HEIGHT as f32);
     let view = View {
         show_hints: mode == "play",
+        show_controls: true,
         selected_difficulty: 2,
         outcome: if mode == "over" {
             board.outcome()

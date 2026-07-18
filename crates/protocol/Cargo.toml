@@ -1,0 +1,11 @@
+[package]
+name = "protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# The wire protocol shared by the client (`app`) and the relay `server`. Uses
+# only primitive types so the server never needs to depend on game logic.
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true

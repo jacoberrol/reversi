@@ -5,6 +5,8 @@ members = [
     "crates/eval",
     "crates/render",
     "crates/app",
+    "crates/protocol",
+    "crates/server",
 ]
 
 # Metadata shared by every crate in the workspace. Individual crates inherit
@@ -20,6 +22,14 @@ license = "MIT OR Apache-2.0"
 game-core = { path = "crates/game-core" }
 eval = { path = "crates/eval" }
 render = { path = "crates/render" }
+protocol = { path = "crates/protocol" }
+
+# Networking (Stage 7). The wire protocol is shared by the client and the relay
+# server via serde. tokio is used by the server only — the client stays
+# async-free (blocking TCP on a background thread).
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "sync", "macros"] }
 
 # Graphics/windowing stack (Stage 4). Pinned once here so every crate agrees on
 # a version — wgpu and winit must share the same raw-window-handle generation.

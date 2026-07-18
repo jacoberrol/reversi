@@ -26,7 +26,14 @@ do not "improve" the architecture toward generic defaults.
 - `crates/eval` — position evaluation (heuristics now, ML later). Depends only on game-core.
 - `crates/render` — wgpu sprite batcher, atlas loading. Keep thin; no game logic.
 - `crates/app` — winit shell; wires the others together. Only crate that may touch windowing.
-- Dependency direction: `app → {render, eval} → game-core`. Never the reverse.
+- `crates/protocol` — the multiplayer wire format (serde). Primitive fields only, no `game-core`
+  dep, so the server stays game-logic-free and `game-core` stays serde-free.
+- `crates/server` — the relay/matchmaking server binary (tokio). Depends on `protocol` only.
+- Dependency direction: `app → {render, eval, protocol} → game-core`; `server → protocol`. Never
+  the reverse.
+- **I/O and async live outside the pure crates.** `game-core`/`eval` stay pure (no I/O, no async).
+  Networking I/O lives in `app` (client, async-free — blocking TCP on a background thread) and
+  `server` (tokio). See DESIGN.md §9.
 - **No ECS, no Bevy** (recorded decision — plain structs; see DESIGN.md §8 / ECS note).
 - Game pieces are procedural (shaders); generated images are for tiles/backgrounds only.
 

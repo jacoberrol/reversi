@@ -46,6 +46,8 @@ pub const BACKGROUND: wgpu::Color = wgpu::Color {
 pub struct View {
     /// Mark the side-to-move's legal moves with hint dots.
     pub show_hints: bool,
+    /// Draw the difficulty control strip (hidden in network mode).
+    pub show_controls: bool,
     /// Which difficulty button is selected (`0..DIFFICULTY_COUNT`).
     pub selected_difficulty: usize,
     /// `Some` when the game is over: draws the end-of-game overlay.
@@ -177,7 +179,9 @@ pub fn scene(board: &Board, layout: &Layout, view: &View, anims: &[PieceAnim]) -
         push_anim(&mut out, board, layout, a);
     }
 
-    push_controls(&mut out, layout, view.selected_difficulty);
+    if view.show_controls {
+        push_controls(&mut out, layout, view.selected_difficulty);
+    }
 
     if let Some(outcome) = view.outcome {
         push_overlay(&mut out, layout, outcome);

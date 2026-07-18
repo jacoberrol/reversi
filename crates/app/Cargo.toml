@@ -10,6 +10,7 @@ license.workspace = true
 game-core.workspace = true
 eval.workspace = true
 render.workspace = true
+protocol.workspace = true
 wgpu.workspace = true
 winit.workspace = true
 pollster.workspace = true

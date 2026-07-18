@@ -94,7 +94,30 @@ UI is drawn with quads. A real in-scene glyph renderer stays on the backlog.
 - ✅ Verify: `just check && just test && just frame` — reviewed static polish, game-over overlay, and a
   mid-flip frame (edge-on squash confirmed). `just run` is the live animation test.
 
-## Backlog / future (post-Stage 6) 🔮
+### Stage 7 — networked multiplayer, Increment 1 (relay + auto-match, localhost) ✅
+North star: named users discover each other over the internet via a cloud server. This increment
+stands up the **real relay topology** on localhost so it isn't throwaway. See DESIGN §9.
+- ✅ `crates/protocol`: serde wire format (primitive fields, no `game-core` dep), length-delimited
+  JSON framing, `Color`/`GameMsg`/`ClientMsg`/`ServerMsg`, version handshake. Round-trip tests.
+- ✅ `crates/server`: tokio relay (lib + thin bin). Auto-pairs the first two waiting clients
+  (Black/White), relays game messages via a per-connection writer task + an in-memory lobby actor,
+  reports disconnects. `just serve`.
+- ✅ `app` network mode: `--server ADDR --name NAME` (`just play`). `EventLoop<NetEvent>` + a
+  background TCP read thread → `EventLoopProxy`; client stays async-free (`TcpStream::try_clone`).
+  `game.rs` split into `play_local`/`apply_remote_move` (+ local pass resolution); remote moves
+  animate through the existing `Animator`. Difficulty UI hidden; status in the title. Logic factored
+  into `session.rs`.
+- ✅ Verify: protocol round-trip tests; a headless **relay integration test** (real server + two
+  loopback clients: auto-match, relay, disconnect); a **sync test** (two networked clients stay
+  identical to game end); server binary boots/binds/accepts. `just run` (single-player) + two
+  `just play` windows (localhost) is the interactive test.
+
+### Stage 7 — later increments 🔮
+- 🔮 Increment 2: named presence + invite (lobby UI; first on-screen text renderer).
+- 🔮 Increment 3: deploy the server to a cloud VM — add TLS, swap TCP→WebSocket behind the
+  connection seam (reusing `protocol`). Out of scope now: accounts/auth, reconnect, spectating, NAT.
+
+## Backlog / future (post-Stage 7) 🔮
 - 🔮 **Search: move ordering** in alpha-beta (try corners / high-mobility / previous-best moves first, or
   order by a shallow pass). Better ordering ⇒ far more pruning ⇒ effectively deeper search at the same cost.
 - 🔮 **Search: exact endgame solver** — once ≤ ~14–16 empties remain, search to the end on exact disc
@@ -135,3 +158,7 @@ Record notable plan/scope changes here so the "why" survives.
 - 2026-07-18 — Stage 6 complete: visual polish. Shader generalized to shapes (rounded rects, glossy
   discs with highlight+rim); board gains a tray frame, star points, disc shadows. Disc-flip animation via
   an app-side `Animator` that turns the event-driven UI into a per-frame loop while a move plays.
+- 2026-07-18 — Stage 7 Increment 1: networked multiplayer (LAN/localhost). New `protocol` (serde) and
+  `server` (tokio relay, auto-match) crates; client gains a network mode over blocking TCP + winit user
+  events, staying async-free. Real relay topology (client→server) chosen so internet-later reuses it.
+  Session/net logic factored into `session.rs`. Verified headless (relay + sync tests). See DESIGN §9.
