@@ -101,6 +101,18 @@ impl Board {
         self.moves_for(self.to_move)
     }
 
+    /// Legal moves for `player`, regardless of whose turn it nominally is.
+    ///
+    /// Useful to evaluators that compare both sides' options (mobility).
+    pub fn legal_moves_for(&self, player: Player) -> Vec<Square> {
+        self.moves_for(player)
+    }
+
+    /// How many legal moves `player` has (their mobility).
+    pub fn mobility(&self, player: Player) -> u32 {
+        self.moves_for(player).len() as u32
+    }
+
     /// Play `sq` for the side to move, returning the resulting position.
     ///
     /// Returns `None` if `sq` is not a legal move (occupied, or flips nothing).

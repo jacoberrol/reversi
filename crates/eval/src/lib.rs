@@ -1,7 +1,10 @@
-//! Position evaluation and search.
+//! Position evaluation for Reversi.
 //!
-//! Handcrafted heuristics (corner control, mobility, disc parity) live behind a
-//! trait so an ML evaluator can slot in later without touching callers. Depends
-//! only on `game-core`.
+//! A handcrafted [`Heuristic`] implements `game-core`'s `Evaluator` trait today;
+//! an ML evaluator can slot in later behind the same trait. The search that
+//! consumes evaluators lives in `game-core` (see its `search` function).
 
-// Stage 3 fills this in with the `Evaluator` trait and alpha-beta search.
+mod heuristic;
+pub mod matchup;
+
+pub use heuristic::Heuristic;

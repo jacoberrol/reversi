@@ -42,13 +42,15 @@ Pure Rust, std only, no panics in the public API (invalid squares / illegal move
 - ✅ Wire `just selfplay N` → `game-core` `selfplay` example (deterministic, seeded)
 - ✅ Verify: `just check && just test && just selfplay 1000` (avg ~60.5 plies/game)
 
-### Stage 3 — eval + search 🚧 (next)
-- ⬜ `eval`: handcrafted evaluation (corner control, mobility, disc parity) behind an `Evaluator` trait
-- ⬜ Minimax + alpha-beta with a depth parameter (depth = difficulty); location justified in the PR
-- ⬜ Tests: depth-1 takes an available corner; deeper beats shallower over a 50-game match (fixed seeds, statistical)
-- ⬜ Verify: checks + tests, and report depth-vs-depth match results
+### Stage 3 — eval + search ✅
+- ✅ `eval`: handcrafted `Heuristic` (corner control, mobility, disc parity) implementing the `Evaluator` trait
+- ✅ Negamax + alpha-beta with a depth parameter (depth = difficulty). **Placement:** search + `Evaluator`
+  trait in `game-core` (CLAUDE.md assigns "search" there; trait sits beside search so it stays generic
+  without depending on `eval`); concrete `Heuristic` in `eval`. ML evaluators later implement the same trait.
+- ✅ Tests: depth-1 takes an available corner; deeper (d3) beats shallower (d1) over a seeded 50-game match
+- ✅ Verify: checks + tests + `just matchup` → **depth 3 beat depth 1: 46–3–1 (94% of decisive games)**
 
-### Stage 4 — window & first pixels ⬜
+### Stage 4 — window & first pixels 🚧 (next)
 - ⬜ `app`: winit window (main thread on macOS), wgpu setup, clear-color loop, resize/surface-loss handling
 - ⬜ `render`: instanced colored-quad batcher (texture support stubbed); draw the 8×8 board + procedural flat discs
 - ⬜ Implement `just frame` (offscreen render → `target/frame.png`); self-check the PNG before claiming it works
@@ -85,3 +87,6 @@ Record notable plan/scope changes here so the "why" survives.
 - 2026-07-18 — Stage 2 complete: `game-core` board + rules (immutable `apply`, exhaustive enum
   matches, `Square`-validated API, no public-API panics). Design choice: `apply`/`pass` return a
   new `Board` rather than mutating, for cheap search in Stage 3.
+- 2026-07-18 — Stage 3 complete: negamax + alpha-beta search and the `Evaluator` trait in `game-core`
+  (per CLAUDE.md), handcrafted `Heuristic` in `eval`. Depth = difficulty. Depth 3 beats depth 1 46–3–1.
+  Added `just matchup` to visualize strength-vs-depth.
