@@ -1,0 +1,43 @@
+name: CI
+
+# Run on PRs targeting main, and on main itself (post-merge safety net).
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Cancel an in-progress run when new commits are pushed to the same ref, so a
+# quick follow-up push doesn't queue behind a now-stale run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least privilege: CI only needs to read the repo contents.
+permissions:
+  contents: read
+
+jobs:
+  # Job name doubles as the required status-check context in the branch ruleset.
+  check-and-test:
+    name: check-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # rustfmt + clippy are needed by `just check`; ensure they're present on
+      # whatever stable the runner ships.
+      - name: Install rustfmt and clippy
+        run: rustup component add rustfmt clippy
+
+      # Cache the cargo registry and target dir keyed on Cargo.lock, so most PRs
+      # skip recompiling dependencies from scratch.
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: extractions/setup-just@v2
+
+      - name: Check (fmt + clippy -D warnings)
+        run: just check
+
+      - name: Test
+        run: just test
