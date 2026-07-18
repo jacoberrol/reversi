@@ -79,4 +79,6 @@ Record notable plan/scope changes here so the "why" survives.
   pipeline (DESIGN §6) is deferred until the game is fun. See DESIGN §6, §8.
 - 2026-07-18 — Adopted a **`PointerInput` abstraction** in `app` (mouse now, touch later) so the
   macOS→iOS port only touches that layer; `game-core` stays `Square`-only. See DESIGN §8, PLAN Stage 4.
+- 2026-07-18 — Added `README.md` (human entry point) and made the branch→PR→CI→squash flow explicit
+  in CLAUDE.md (it predated branch protection).
 - 2026-07-18 — Repo made public to enable free branch protection; PR-only + squash-only flow on `main`.

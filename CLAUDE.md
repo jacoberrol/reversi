@@ -43,8 +43,11 @@ do not "improve" the architecture toward generic defaults.
 ## Workflow
 
 - Work in small verified steps: after each meaningful change run `just check && just test`.
-- Commit after each working milestone with a one-line imperative message. Never commit
-  with failing checks.
+- `main` is protected: **no direct pushes.** Every change lands via a feature branch → PR →
+  passing CI (`check-and-test`) → **squash merge** (the only allowed merge method; the branch
+  auto-deletes). Never merge with failing checks.
+- Squash commit = the PR title + body, so keep PR titles imperative and one line.
+- Track work in `PLAN.md`: update stage checkboxes and the change log as things land.
 - macOS is the dev target; iOS/Android come later — don't add mobile scaffolding yet,
   but don't block it either (no desktop-only crates in game-core/eval).
 
