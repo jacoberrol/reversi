@@ -5,10 +5,10 @@ use wgpu::util::DeviceExt;
 
 use crate::quad::{Instance, Vertex, QUAD_INDICES, QUAD_VERTICES};
 
-/// Upper bound on quads per frame. The board needs ~130 (1 backing + 64 cells +
-/// up to 64 discs + a few hints), so 256 is comfortable and lets us use one
-/// fixed-size instance buffer instead of reallocating.
-const MAX_INSTANCES: usize = 256;
+/// Upper bound on quads per frame. With frame + cells + star points + per-disc
+/// drop shadows + discs + hints + controls, a busy frame is ~215; 512 leaves
+/// generous headroom and lets us use one fixed-size instance buffer.
+const MAX_INSTANCES: usize = 512;
 
 /// Uniform block shared by every vertex. `_pad` rounds the struct up to the
 /// 16-byte alignment a uniform buffer requires.
@@ -69,7 +69,8 @@ impl Renderer {
             1 => Float32x2, // center
             2 => Float32x2, // half_size
             3 => Float32x4, // color
-            4 => Float32,   // circle
+            4 => Float32,   // shape
+            5 => Float32,   // param
         ];
         let vertex_layout = wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<Vertex>() as u64,

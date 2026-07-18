@@ -4,6 +4,7 @@
 //! dispatches window events to [`WindowState`]. Wires `game-core` (rules),
 //! `eval` (AI), and `render` (drawing) together.
 
+mod anim;
 mod game;
 mod gpu;
 mod input;
