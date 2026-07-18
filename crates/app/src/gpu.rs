@@ -9,10 +9,11 @@
 
 use std::sync::Arc;
 
+use game_core::{Outcome, Player};
 use render::{board_view, Renderer};
 use winit::window::Window;
 
-use crate::game::{Game, HUMAN};
+use crate::game::{Difficulty, Game};
 use crate::input::{Phase, PointerInput};
 
 pub struct WindowState {
@@ -82,7 +83,7 @@ impl WindowState {
 
         let renderer = Renderer::new(&device, format);
 
-        Self {
+        let state = Self {
             window,
             surface,
             device,
@@ -91,7 +92,9 @@ impl WindowState {
             renderer,
             game: Game::new(),
             cursor: [0.0, 0.0],
-        }
+        };
+        state.update_title();
+        state
     }
 
     pub fn request_redraw(&self) {
@@ -115,17 +118,72 @@ impl WindowState {
         self.cursor
     }
 
-    /// Handle a pointer event. Returns `true` if the board changed (redraw
-    /// needed). Only a press inside the board does anything for now.
+    /// Start a new game.
+    pub fn restart(&mut self) {
+        self.game.restart();
+        self.update_title();
+    }
+
+    /// Select difficulty by button index (`0..4`). Returns whether it changed.
+    pub fn set_difficulty_index(&mut self, index: usize) -> bool {
+        match Difficulty::from_index(index) {
+            Some(difficulty) => {
+                self.game.set_difficulty(difficulty);
+                self.update_title();
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Handle a pointer event. Returns `true` if something changed (redraw
+    /// needed). Clicks route to the difficulty buttons, then to restart (when the
+    /// game is over), then to placing a move.
     pub fn handle_pointer(&mut self, input: PointerInput) -> bool {
         if input.phase != Phase::Pressed {
             return false;
         }
         let layout = board_view::layout(self.config.width as f32, self.config.height as f32);
-        match board_view::square_at(&layout, input.x, input.y) {
+
+        if let Some(index) = board_view::difficulty_button_at(&layout, input.x, input.y) {
+            return self.set_difficulty_index(index);
+        }
+
+        if self.game.is_over() {
+            self.restart();
+            return true;
+        }
+
+        let changed = match board_view::square_at(&layout, input.x, input.y) {
             Some(sq) => self.game.play_human(sq),
             None => false,
+        };
+        if changed {
+            self.update_title();
         }
+        changed
+    }
+
+    /// Reflect the current state in the window title (our stand-in for on-screen
+    /// text until a glyph renderer exists).
+    fn update_title(&self) {
+        let (human, ai) = self.game.score();
+        let status = match self.game.outcome() {
+            Some(Outcome::Win(Player::Black)) => {
+                format!("You win {human}\u{2013}{ai} \u{00b7} click board for a new game")
+            }
+            Some(Outcome::Win(Player::White)) => {
+                format!("AI wins {ai}\u{2013}{human} \u{00b7} click board for a new game")
+            }
+            Some(Outcome::Draw) => {
+                format!("Draw {human}\u{2013}{ai} \u{00b7} click board for a new game")
+            }
+            None => "Your move".to_string(),
+        };
+        self.window.set_title(&format!(
+            "Reversi \u{2014} {status} \u{00b7} {}",
+            self.game.difficulty().name()
+        ));
     }
 
     /// Draw the current board to the window.
@@ -147,12 +205,12 @@ impl WindowState {
 
         let size = [self.config.width as f32, self.config.height as f32];
         let layout = board_view::layout(size[0], size[1]);
-        let hints = if self.game.awaiting_human() {
-            Some(HUMAN)
-        } else {
-            None
+        let scene = board_view::View {
+            show_hints: self.game.awaiting_human(),
+            selected_difficulty: self.game.difficulty().index(),
+            outcome: self.game.outcome(),
         };
-        let instances = board_view::instances(&self.game.board, &layout, hints);
+        let instances = board_view::scene(self.game.board(), &layout, &scene);
         self.renderer.prepare(&self.queue, size, &instances);
 
         let mut encoder = self

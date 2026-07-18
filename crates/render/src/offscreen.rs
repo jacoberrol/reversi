@@ -8,12 +8,11 @@
 
 use std::io::Cursor;
 
-use game_core::Board;
+use crate::{board_view, Instance, Renderer};
 
-use crate::{board_view, Renderer};
-
-/// Render `board` to a `width` x `height` frame and return PNG bytes.
-pub fn render_board_png(board: &Board, width: u32, height: u32) -> Vec<u8> {
+/// Render `instances` to a `width` x `height` frame and return PNG bytes. Build
+/// the instances with [`board_view::scene`] so this matches the on-screen frame.
+pub fn render_png(instances: &[Instance], width: u32, height: u32) -> Vec<u8> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::all(),
         ..Default::default()
@@ -56,9 +55,7 @@ pub fn render_board_png(board: &Board, width: u32, height: u32) -> Vec<u8> {
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
     let mut renderer = Renderer::new(&device, format);
-    let layout = board_view::layout(width as f32, height as f32);
-    let instances = board_view::instances(board, &layout, Some(board.to_move()));
-    renderer.prepare(&queue, [width as f32, height as f32], &instances);
+    renderer.prepare(&queue, [width as f32, height as f32], instances);
 
     let mut encoder =
         device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });

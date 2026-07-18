@@ -40,7 +40,7 @@ Other recipes (`atlas` is stubbed until the deferred sprite pipeline — see [PL
 
 | Command | What it does |
 |---|---|
-| `just run` | Launch the game window and play Black vs. the AI (White). |
+| `just run` | Launch the game window and play Black vs. the AI (White). Click a difficulty button (or press `1`–`4`); at game over, click the board or press `R` for a new game. The title bar shows turn, difficulty, and result. |
 | `just selfplay N` | Headless: play N random self-play games. |
 | `just matchup [DEEP] [SHALLOW] [GAMES]` | Play a depth-vs-depth AI match and print the score. |
 | `just frame` | Render one board frame to `target/frame.png` for visual inspection. |
