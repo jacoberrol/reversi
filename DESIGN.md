@@ -48,6 +48,12 @@ Core crates (initial): `wgpu`, `winit`, `image` (PNG decode), `asefile` (load As
 
 ## 6. Asset pipeline (2D sprites)
 
+> **Deferred past the first iteration.** v1 ships with **procedural graphics only**
+> (solid quads + shader-drawn discs — see §7 and §8). This whole sprite-generation
+> pipeline is a later-iteration learning goal, not v1 work; it stays documented here
+> so the batcher/atlas abstraction is designed to absorb it, but nothing below is built
+> until the game is fun with procedural art.
+
 Five stages, all local:
 
 1. **Generate** — Draw Things (free, runs Core ML/Metal on-device — the asset pipeline itself exercises the hardware).
@@ -86,6 +92,7 @@ Draw Things exposes JavaScript batch automation and an MCP server usable from Cl
 ### Decided
 - **Game mechanic: Reversi (Othello), 8×8.** Previously the biggest open question; now committed (see §1).
 - **Game state: plain structs, no ECS.** Reversi's fixed 8×8 board carries too little entity variety to justify an ECS; plain structs keep `game-core` dependency-free and trivially unit-testable. (No Bevy either — see §7.)
+- **First iteration: procedural graphics only.** Solid-color quads and shader-drawn discs; the diffusion/Aseprite sprite pipeline (§6) is deferred until the game is fun. The atlas/batcher abstraction is still built so real art drops in later without code changes.
 
 ### Still open
 - [ ] Art direction: pixel art vs. HD/vector-ish procedural look (affects LoRA choice and atlas resolution)

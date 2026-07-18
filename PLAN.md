@@ -10,6 +10,8 @@
 ## How we work
 
 - macOS is the dev target. Rust + wgpu + winit, plain structs (no ECS/Bevy).
+- **v1 graphics are procedural only** — solid quads + shader-drawn discs. The diffusion/Aseprite
+  sprite pipeline (DESIGN §6) is explicitly out of scope until the game is fun.
 - `main` is protected: every change lands via a **PR** that passes CI, **squash-merged**.
 - Each stage ends with a green `just check && just test` (+ any stage-specific verify)
   and a commit/PR. Never merge with failing checks.
@@ -55,8 +57,9 @@ Pure Rust, std only, no panics in the public API (invalid squares / illegal move
 
 ## Backlog / future (post-Stage 4) 🔮
 - 🔮 Shader polish for procedural discs (SDF circle + highlight + rim), flip/settle animation
-- 🔮 Real `just atlas`: Aseprite CLI pipeline for tiles/backgrounds (requires `aseprite` on PATH)
-- 🔮 Texture-backed sprites through the batcher (unstub texture support)
+- 🔮 **Deferred sprite pipeline (not v1):** real `just atlas` via Aseprite CLI for tiles/backgrounds
+  (requires `aseprite` on PATH), plus the diffusion generation steps in DESIGN §6
+- 🔮 **Deferred sprite pipeline (not v1):** texture-backed sprites through the batcher (unstub texture support)
 - 🔮 ML evaluator via `burn` (wgpu backend) behind the `Evaluator` trait — first ML experiment (see DESIGN §8)
 - 🔮 Audio stack decision (`kira`/`rodio`)
 - 🔮 Art-direction decision (pixel vs. procedural-HD)
@@ -66,4 +69,6 @@ Pure Rust, std only, no panics in the public API (invalid squares / illegal move
 Record notable plan/scope changes here so the "why" survives.
 - 2026-07-18 — Committed to Reversi as the mechanic; dropped the ML level-generator idea
   (Reversi has no levels). Confirmed plain structs over ECS. See DESIGN §1, §5, §8.
+- 2026-07-18 — Scoped v1 to **procedural graphics only**; the diffusion/Aseprite sprite
+  pipeline (DESIGN §6) is deferred until the game is fun. See DESIGN §6, §8.
 - 2026-07-18 — Repo made public to enable free branch protection; PR-only + squash-only flow on `main`.
