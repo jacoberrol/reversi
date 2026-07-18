@@ -24,6 +24,16 @@ pub const PROTOCOL_VERSION: u16 = 1;
 /// or hostile length prefix causing a huge allocation).
 const MAX_FRAME: usize = 1 << 16;
 
+/// A connected player, for the lifetime of its connection.
+pub type PlayerId = u64;
+
+/// A player as advertised in the lobby presence list.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlayerInfo {
+    pub id: PlayerId,
+    pub name: String,
+}
+
 /// Which side a player controls. A primitive mirror of `game_core::Player`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Color {
@@ -50,6 +60,12 @@ pub enum GameMsg {
 pub enum ClientMsg {
     /// First message on connect: the player's display name and protocol version.
     Hello { name: String, protocol: u16 },
+    /// Invite another player (by id) to a game.
+    Invite { to: PlayerId },
+    /// Accept an invite from `inviter`.
+    Accept { inviter: PlayerId },
+    /// Decline an invite from `inviter`.
+    Decline { inviter: PlayerId },
     /// An in-game action, to be relayed to the opponent.
     Game(GameMsg),
 }
@@ -57,6 +73,12 @@ pub enum ClientMsg {
 /// A message from the server to a client.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ServerMsg {
+    /// The other players currently available in the lobby.
+    Presence { players: Vec<PlayerInfo> },
+    /// You received an invite from player `from` (named `name`).
+    Invited { from: PlayerId, name: String },
+    /// An invite you sent was declined by player `by`.
+    InviteDeclined { by: PlayerId },
     /// Paired with an opponent; you play `your_color`.
     Matched { your_color: Color, opponent: String },
     /// An in-game action from the opponent.
@@ -127,6 +149,9 @@ mod tests {
             name: "Jake".into(),
             protocol: PROTOCOL_VERSION,
         });
+        round_trip_client(ClientMsg::Invite { to: 7 });
+        round_trip_client(ClientMsg::Accept { inviter: 7 });
+        round_trip_client(ClientMsg::Decline { inviter: 7 });
         round_trip_client(ClientMsg::Game(GameMsg::Move { square: 19 }));
         round_trip_client(ClientMsg::Game(GameMsg::Restart));
         round_trip_client(ClientMsg::Game(GameMsg::Resign));
@@ -135,6 +160,23 @@ mod tests {
     #[test]
     fn server_messages_round_trip() {
         for msg in [
+            ServerMsg::Presence {
+                players: vec![
+                    PlayerInfo {
+                        id: 1,
+                        name: "Bob".into(),
+                    },
+                    PlayerInfo {
+                        id: 2,
+                        name: "Carol".into(),
+                    },
+                ],
+            },
+            ServerMsg::Invited {
+                from: 1,
+                name: "Bob".into(),
+            },
+            ServerMsg::InviteDeclined { by: 1 },
             ServerMsg::Matched {
                 your_color: Color::Black,
                 opponent: "Bob".into(),

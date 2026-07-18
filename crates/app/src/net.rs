@@ -10,13 +10,19 @@ use std::io::{self, Write};
 use std::net::TcpStream;
 use std::thread;
 
-use protocol::{ClientMsg, Color, GameMsg, ServerMsg, PROTOCOL_VERSION};
+use protocol::{ClientMsg, Color, GameMsg, PlayerId, PlayerInfo, ServerMsg, PROTOCOL_VERSION};
 use winit::event_loop::EventLoopProxy;
 
 /// A message from the network, injected into the winit event loop as a user
 /// event.
 #[derive(Debug)]
 pub enum NetEvent {
+    /// The other players currently available in the lobby.
+    Presence(Vec<PlayerInfo>),
+    /// You received an invite.
+    Invited { from: PlayerId, name: String },
+    /// An invite you sent was declined.
+    InviteDeclined { by: PlayerId },
     /// Paired with an opponent; the local player controls `color`.
     Matched { color: Color, opponent: String },
     /// An in-game message from the opponent.
@@ -38,7 +44,26 @@ impl NetHandle {
     /// Send an in-game message to the opponent (best effort; a broken connection
     /// surfaces as [`NetEvent::Disconnected`] on the read thread).
     pub fn send(&mut self, msg: GameMsg) {
-        let _ = protocol::write_msg(&mut self.writer, &ClientMsg::Game(msg));
+        self.send_client(ClientMsg::Game(msg));
+    }
+
+    /// Invite another player (by id) to a game.
+    pub fn invite(&mut self, to: PlayerId) {
+        self.send_client(ClientMsg::Invite { to });
+    }
+
+    /// Accept an invite from `inviter`.
+    pub fn accept(&mut self, inviter: PlayerId) {
+        self.send_client(ClientMsg::Accept { inviter });
+    }
+
+    /// Decline an invite from `inviter`.
+    pub fn decline(&mut self, inviter: PlayerId) {
+        self.send_client(ClientMsg::Decline { inviter });
+    }
+
+    fn send_client(&mut self, msg: ClientMsg) {
+        let _ = protocol::write_msg(&mut self.writer, &msg);
         let _ = self.writer.flush();
     }
 }
@@ -88,6 +113,9 @@ fn read_loop(mut reader: TcpStream, proxy: EventLoopProxy<NetEvent>) {
 
 fn server_msg_to_event(msg: ServerMsg) -> NetEvent {
     match msg {
+        ServerMsg::Presence { players } => NetEvent::Presence(players),
+        ServerMsg::Invited { from, name } => NetEvent::Invited { from, name },
+        ServerMsg::InviteDeclined { by } => NetEvent::InviteDeclined { by },
         ServerMsg::Matched {
             your_color,
             opponent,

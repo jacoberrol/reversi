@@ -93,7 +93,7 @@ Draw Things exposes JavaScript batch automation and an MCP server usable from Cl
 - **Game mechanic: Reversi (Othello), 8×8.** Previously the biggest open question; now committed (see §1).
 - **Game state: plain structs, no ECS.** Reversi's fixed 8×8 board carries too little entity variety to justify an ECS; plain structs keep `game-core` dependency-free and trivially unit-testable. (No Bevy either — see §7.)
 - **First iteration: procedural graphics only.** Solid-color quads and shader-drawn discs; the diffusion/Aseprite sprite pipeline (§6) is deferred until the game is fun. The atlas/batcher abstraction is still built so real art drops in later without code changes.
-- **Input via a `PointerInput` abstraction, for portability.** Platform events are normalized in `app` to one internal `PointerInput` (a board-space point + a press/release phase): winit `MouseInput`/`CursorMoved` on macOS today, winit `Touch` on iOS later. `app` hit-tests that point to a `Square` using board geometry exposed by `render` (the inverse of the draw layout); `game-core` only ever receives a `Square` and stays input-agnostic. Net effect: the macOS→iOS port is confined to the thin event-normalization layer in `app` — rules, eval, and rendering are untouched. (Honors the "touch from day one" intent in §2.)
+- **Input handled at one seam in `app`, for portability.** All platform pointer events enter through `WindowState::{set_cursor, mouse_button}`; from there in-game clicks hit-test to a `Square` via board geometry exposed by `render` (the inverse of the draw layout), and lobby clicks feed egui. `game-core` only ever receives a `Square` and stays input-agnostic. Net effect: the macOS→iOS port is confined to that thin seam (winit `MouseInput`/`CursorMoved` today, `Touch` later) — rules, eval, and rendering are untouched. (Honors the "touch from day one" intent in §2. Earlier a dedicated `PointerInput` type held this seam; the egui integration folded it into `WindowState`.)
 
 ### Still open
 - [ ] Art direction: pixel art vs. HD/vector-ish procedural look (affects LoRA choice and atlas resolution)
@@ -126,7 +126,17 @@ Rust server on a cloud VM. We build the real topology now and stage toward that.
   gRPC: gRPC would force tokio onto the client and buys little for two Rust peers swapping
   one-byte moves.
 
-### Staged (later increments)
-- Named presence + invite (a real lobby UI; the first on-screen text renderer).
+### UI: egui for menus/lobby (decided)
+On-screen text and the lobby use **egui** (`egui` + `egui-wgpu`, on our wgpu 0.20). We evaluated
+hand-rolling a bitmap-font + custom widgets (fits the "build the plumbing" ethos, unstubs textures)
+vs. egui, rendered a themed mockup of each, and chose egui: richer, faster, and — themed (custom
+`Visuals`, rounded `Frame`s, no `Window` chrome, no default gray) — it reads as a game menu, not a
+debug panel. It draws on its own `egui-wgpu` pass over the surface; the board stays on our custom
+renderer. We deliberately skip `egui-winit` (it pins winit 0.29, conflicting with our 0.30) and
+hand-feed pointer input to egui instead. If the look ever grates, the lobby sits behind our own
+screen state so a custom UI could replace it.
+
+### Staged
+- ✅ Increment 2: named presence + invite lobby (egui). Auto-match replaced by presence + invites.
 - Deploy to a cloud VM: add TLS, swap TCP→WebSocket behind the connection seam.
 - Out of scope for now: accounts/auth, reconnect, spectating, NAT traversal.

@@ -77,22 +77,26 @@ async fn handle(stream: TcpStream, lobby_tx: mpsc::Sender<LobbyCmd>) -> io::Resu
         Err(_) => return Ok(()),
     };
 
-    // Relay every game message until the client disconnects.
+    // Forward the client's lobby/game messages until it disconnects.
     while let Some(msg) = read_client(&mut read_half).await? {
-        match msg {
-            ClientMsg::Game(game) => {
-                if lobby_tx
-                    .send(LobbyCmd::Relay {
-                        from: id,
-                        msg: game,
-                    })
-                    .await
-                    .is_err()
-                {
-                    break;
-                }
-            }
-            ClientMsg::Hello { .. } => {} // ignore a stray second Hello
+        let cmd = match msg {
+            ClientMsg::Invite { to } => LobbyCmd::Invite { from: id, to },
+            ClientMsg::Accept { inviter } => LobbyCmd::Accept {
+                accepter: id,
+                inviter,
+            },
+            ClientMsg::Decline { inviter } => LobbyCmd::Decline {
+                decliner: id,
+                inviter,
+            },
+            ClientMsg::Game(game) => LobbyCmd::Relay {
+                from: id,
+                msg: game,
+            },
+            ClientMsg::Hello { .. } => continue, // ignore a stray second Hello
+        };
+        if lobby_tx.send(cmd).await.is_err() {
+            break;
         }
     }
 

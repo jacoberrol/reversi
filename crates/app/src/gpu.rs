@@ -1,11 +1,6 @@
-//! Per-window GPU state: surface, device, the [`Renderer`], and the [`Session`]
-//! it draws. Game/network logic lives in `session`; this file is wgpu + winit.
-//!
-//! wgpu concepts in brief:
-//! - **surface**: the swapchain the window presents; invalid on resize/display
-//!   change and reconfigured in [`WindowState::render`].
-//! - **device / queue**: the logical GPU and its submission queue.
-//! - **config**: format + size the surface is configured for.
+//! Per-window GPU state: surface, device, the board [`Renderer`], the
+//! [`EguiLayer`] for the lobby, and the [`Session`] they draw. Game/lobby logic
+//! lives in `session`; this file is wgpu + winit + screen routing.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -13,7 +8,7 @@ use std::time::Instant;
 use render::{board_view, Renderer};
 use winit::window::Window;
 
-use crate::input::{Phase, PointerInput};
+use crate::egui_layer::EguiLayer;
 use crate::net::{NetEvent, NetHandle};
 use crate::session::Session;
 
@@ -24,9 +19,9 @@ pub struct WindowState {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     renderer: Renderer,
+    egui: EguiLayer,
     session: Session,
-    /// Last known cursor position (physical pixels); winit's click event doesn't
-    /// carry a position, so we track it from cursor-moved events.
+    /// Last cursor position (physical pixels).
     cursor: [f32; 2],
 }
 
@@ -80,6 +75,7 @@ impl WindowState {
         surface.configure(&device, &config);
 
         let renderer = Renderer::new(&device, format);
+        let egui = EguiLayer::new(&device, &queue, format);
 
         Self {
             window,
@@ -88,6 +84,7 @@ impl WindowState {
             queue,
             config,
             renderer,
+            egui,
             session: Session::new(),
             cursor: [0.0, 0.0],
         }
@@ -105,58 +102,70 @@ impl WindowState {
         }
     }
 
+    // --- input ----------------------------------------------------------
+
     pub fn set_cursor(&mut self, x: f32, y: f32) {
         self.cursor = [x, y];
+        if self.session.is_lobby() {
+            let ppp = self.window.scale_factor() as f32;
+            self.egui.pointer_moved([x / ppp, y / ppp]);
+            self.request_redraw();
+        }
     }
 
-    pub fn cursor(&self) -> [f32; 2] {
-        self.cursor
+    pub fn mouse_button(&mut self, pressed: bool) {
+        if self.session.is_lobby() {
+            self.egui.pointer_button(pressed);
+            self.request_redraw();
+        } else if pressed {
+            let [x, y] = self.cursor;
+            if self.handle_game_click(x, y) {
+                self.request_redraw();
+            }
+        }
     }
 
-    // --- session delegation ---------------------------------------------
-
-    pub fn enter_network(&mut self, handle: NetHandle) {
-        self.session.enter_network(handle);
+    fn handle_game_click(&mut self, x: f32, y: f32) -> bool {
+        let layout = board_view::layout(self.config.width as f32, self.config.height as f32);
+        if !self.session.is_network() {
+            if let Some(index) = board_view::difficulty_button_at(&layout, x, y) {
+                return self.session.set_difficulty_index(index);
+            }
+        }
+        match board_view::square_at(&layout, x, y) {
+            Some(sq) => self.session.click_square(sq),
+            None => false,
+        }
     }
 
-    pub fn set_net_error(&mut self, message: String) {
-        self.session.set_net_error(message);
-    }
-
-    pub fn on_net_event(&mut self, event: NetEvent) -> bool {
-        self.session.on_net_event(event)
-    }
-
-    pub fn restart(&mut self) {
+    pub fn restart(&mut self) -> bool {
+        if self.session.is_lobby() {
+            return false;
+        }
         self.session.restart();
+        true
     }
 
     pub fn set_difficulty_index(&mut self, index: usize) -> bool {
         self.session.set_difficulty_index(index)
     }
 
-    /// Handle a pointer event. Returns `true` if something changed (redraw
-    /// needed).
-    pub fn handle_pointer(&mut self, input: PointerInput) -> bool {
-        if input.phase != Phase::Pressed {
-            return false;
-        }
-        let layout = board_view::layout(self.config.width as f32, self.config.height as f32);
+    // --- network --------------------------------------------------------
 
-        // Difficulty buttons exist only in single-player mode.
-        if !self.session.is_network() {
-            if let Some(index) = board_view::difficulty_button_at(&layout, input.x, input.y) {
-                return self.session.set_difficulty_index(index);
-            }
-        }
-
-        match board_view::square_at(&layout, input.x, input.y) {
-            Some(sq) => self.session.click_square(sq),
-            None => false,
-        }
+    pub fn enter_network(&mut self, handle: NetHandle, name: String) {
+        self.session.enter_network(handle, name);
     }
 
-    /// Draw the current state to the window.
+    pub fn set_net_error(&mut self, name: String, message: String) {
+        self.session.set_net_error(name, message);
+    }
+
+    pub fn on_net_event(&mut self, event: NetEvent) -> bool {
+        self.session.on_net_event(event)
+    }
+
+    // --- rendering ------------------------------------------------------
+
     pub fn render(&mut self) {
         let frame = match self.surface.get_current_texture() {
             Ok(frame) => frame,
@@ -169,10 +178,47 @@ impl WindowState {
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-
-        // Keep the title in sync with state (our text stand-in).
         self.window.set_title(&self.session.title());
 
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+
+        if self.session.is_lobby() {
+            self.render_lobby(&mut encoder, &view);
+            self.queue.submit(std::iter::once(encoder.finish()));
+            frame.present();
+        } else {
+            self.render_game(&mut encoder, &view);
+            self.queue.submit(std::iter::once(encoder.finish()));
+            frame.present();
+            if self.session.is_animating() {
+                self.request_redraw();
+            }
+        }
+    }
+
+    fn render_lobby(&mut self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
+        let ppp = self.window.scale_factor() as f32;
+        let size = [self.config.width, self.config.height];
+        let mut actions = Vec::new();
+        {
+            let egui = &mut self.egui;
+            let session = &self.session;
+            egui.render(&self.device, &self.queue, encoder, view, size, ppp, |ctx| {
+                crate::lobby::ui(ctx, session.lobby_state(), &mut actions);
+            });
+        }
+        let had_actions = !actions.is_empty();
+        for action in actions {
+            self.session.lobby_action(action);
+        }
+        if had_actions {
+            self.request_redraw();
+        }
+    }
+
+    fn render_game(&mut self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
         let size = [self.config.width as f32, self.config.height as f32];
         let layout = board_view::layout(size[0], size[1]);
         let (board, anims) = self.session.frame(Instant::now());
@@ -180,32 +226,20 @@ impl WindowState {
         let instances = board_view::scene(&board, &layout, &scene, &anims);
         self.renderer.prepare(&self.queue, size, &instances);
 
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("frame pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(board_view::BACKGROUND),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-            self.renderer.draw(&mut pass);
-        }
-        self.queue.submit(std::iter::once(encoder.finish()));
-        frame.present();
-
-        // Keep frames coming while a move animates.
-        if self.session.is_animating() {
-            self.request_redraw();
-        }
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("board pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(board_view::BACKGROUND),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        self.renderer.draw(&mut pass);
     }
 }

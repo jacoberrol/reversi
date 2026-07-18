@@ -50,18 +50,25 @@ Other recipes (`atlas` is stubbed until the deferred sprite pipeline — see [PL
 
 ### Multiplayer (LAN / localhost)
 
-Two players connect to a small relay server, which auto-pairs them. On one machine, use three
-terminals:
+Players connect to a small relay server and see each other in a **lobby**; one invites another, they
+accept, and the game begins. The fastest way to try it on one machine:
+
+```sh
+just demo   # builds, starts a relay, and opens two lobby windows that can invite each other
+```
+
+Or run the pieces yourself (three terminals):
 
 ```sh
 just serve                       # start the relay on 127.0.0.1:5000
-just play 127.0.0.1:5000 Alice   # window 1 (becomes Black)
-just play 127.0.0.1:5000 Bob     # window 2 (becomes White)
+just play 127.0.0.1:5000 Alice   # window 1: lobby
+just play 127.0.0.1:5000 Bob     # window 2: lobby
 ```
 
-The first two players to connect are matched automatically. Across two Macs on the same Wi-Fi,
-run `just serve 0.0.0.0:5000` on one and `just play <that-Mac's-IP>:5000 <name>` on each. See
-[DESIGN.md §9](DESIGN.md) for the architecture and the road to internet play.
+In one window, click **Invite** next to the other player; in the other, click **Accept**. The
+inviter plays Black (moves first). Across two Macs on the same Wi-Fi, run `just serve 0.0.0.0:5000`
+on one and `just play <that-Mac's-IP>:5000 <name>` on each. See [DESIGN.md §9](DESIGN.md) for the
+architecture and the road to internet play.
 
 ## Project layout
 
@@ -74,7 +81,7 @@ A Cargo workspace with a strict, one-directional dependency graph
 | `crates/eval` | Position evaluation (heuristics now, ML later) behind a trait. | game-core |
 | `crates/render` | `wgpu` sprite/quad batcher and board geometry. No game logic. | game-core |
 | `crates/protocol` | Multiplayer wire format (serde). Primitive types only. | — |
-| `crates/app` | `winit` shell + input + client networking; the only crate that touches windowing. | render, eval, protocol, game-core |
+| `crates/app` | `winit` shell + input + client networking + `egui` lobby; the only crate that touches windowing. | render, eval, protocol, game-core |
 | `crates/server` | Relay/matchmaking server (`tokio`). Relays messages opaquely. | protocol |
 
 Keeping `game-core` and `eval` pure means the rules and AI are fully testable with
