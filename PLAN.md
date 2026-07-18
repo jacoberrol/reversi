@@ -32,17 +32,17 @@ Status legend: ✅ done · 🚧 in progress · ⬜ not started · 🔮 future / 
 - ✅ Verify: `just check` and `just test` green on empty workspace
 - Commit: `Scaffold Cargo workspace skeleton`
 
-### Stage 2 — game-core: board & rules 🚧 (next)
+### Stage 2 — game-core: board & rules ✅
 Pure Rust, std only, no panics in the public API (invalid squares / illegal moves → `Result`/`Option`).
-- ⬜ `Board`, `Cell`, `Player`, `Square` newtype
-- ⬜ Move generation, disc flipping, pass handling, terminal detection
-- ⬜ Tests: opening has exactly 4 legal moves for Black; a known flip scenario; forced pass;
-  full-board and no-moves-for-both game end
-- ⬜ Perft-style test: 1,000 random games to completion, no panics, disc counts always sum correctly
-- ⬜ Wire `just selfplay N` to a game-core example/binary
-- ⬜ Verify: `just check && just test && just selfplay 1000`
+- ✅ `Board`, `Cell`, `Player`, `Square` newtype (one concept per file)
+- ✅ Move generation, disc flipping, pass handling, terminal detection (`apply`/`pass`/`is_terminal`/`outcome`)
+- ✅ Tests: opening has exactly 4 legal moves for Black; a known flip scenario; forced pass;
+  full-board and no-moves-for-both game end (7 unit tests)
+- ✅ Perft-style test: 1,000 random games to completion, no panics, disc counts always sum to 64 every ply
+- ✅ Wire `just selfplay N` → `game-core` `selfplay` example (deterministic, seeded)
+- ✅ Verify: `just check && just test && just selfplay 1000` (avg ~60.5 plies/game)
 
-### Stage 3 — eval + search ⬜
+### Stage 3 — eval + search 🚧 (next)
 - ⬜ `eval`: handcrafted evaluation (corner control, mobility, disc parity) behind an `Evaluator` trait
 - ⬜ Minimax + alpha-beta with a depth parameter (depth = difficulty); location justified in the PR
 - ⬜ Tests: depth-1 takes an available corner; deeper beats shallower over a 50-game match (fixed seeds, statistical)
@@ -82,3 +82,6 @@ Record notable plan/scope changes here so the "why" survives.
 - 2026-07-18 — Added `README.md` (human entry point) and made the branch→PR→CI→squash flow explicit
   in CLAUDE.md (it predated branch protection).
 - 2026-07-18 — Repo made public to enable free branch protection; PR-only + squash-only flow on `main`.
+- 2026-07-18 — Stage 2 complete: `game-core` board + rules (immutable `apply`, exhaustive enum
+  matches, `Square`-validated API, no public-API panics). Design choice: `apply`/`pass` return a
+  new `Board` rather than mutating, for cheap search in Stage 3.
