@@ -22,9 +22,8 @@ check:
 
 # Headless: play N random self-play games in game-core and print results.
 # N defaults to 100 when omitted: `just selfplay` or `just selfplay 1000`.
-# Wired to a real game-core example in Stage 2.
 selfplay N="100":
-    @echo "selfplay: not implemented yet (arrives in Stage 2). Requested N={{N}}."
+    cargo run -q -p game-core --example selfplay -- {{N}}
 
 # Render one frame offscreen to target/frame.png, for inspecting visual output.
 # Wired to a real offscreen renderer in Stage 4.

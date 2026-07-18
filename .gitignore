@@ -14,3 +14,6 @@
 
 # Rendered frames / scratch output produced by `just frame`
 /target/frame.png
+
+# Local-only bootstrap prompt (kept out of the repo intentionally)
+bootstrap-prompt.txt
