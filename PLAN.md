@@ -72,7 +72,11 @@ Pure Rust, std only, no panics in the public API (invalid squares / illegal move
 ## Backlog / future (post-Stage 4) 🔮
 - 🔮 Game-over UI (winner/score banner) and a restart control — v1 has no end-of-game screen yet
 - 🔮 Difficulty selector mapped to search depth (Easy 2 / Medium 4 / Hard 6 / Expert 7–8)
-- 🔮 Iterative deepening with a per-move time budget + endgame solver (bounded latency, perfect endgame)
+- 🔮 **Search: move ordering** in alpha-beta (try corners / high-mobility / previous-best moves first, or
+  order by a shallow pass). Better ordering ⇒ far more pruning ⇒ effectively deeper search at the same cost.
+- 🔮 **Search: exact endgame solver** — once ≤ ~14–16 empties remain, search to the end on exact disc
+  count (no heuristic). Cheap there (branching collapses) and plays the endgame perfectly.
+- 🔮 Search: iterative deepening with a per-move time budget (bounded latency regardless of position)
 - 🔮 Shader polish for procedural discs (highlight + rim), flip/settle animation
 - 🔮 **Deferred sprite pipeline (not v1):** real `just atlas` via Aseprite CLI for tiles/backgrounds
   (requires `aseprite` on PATH), plus the diffusion generation steps in DESIGN §6
