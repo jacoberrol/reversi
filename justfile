@@ -25,6 +25,11 @@ check:
 selfplay N="100":
     cargo run -q -p game-core --example selfplay -- {{N}}
 
+# Play a depth-vs-depth AI match and print results (deeper should win).
+# Defaults: depth 3 vs depth 1 over 50 games. `just matchup 4 2 20` to vary.
+matchup DEEP="3" SHALLOW="1" GAMES="50":
+    cargo run -q -p eval --example matchup --release -- {{DEEP}} {{SHALLOW}} {{GAMES}}
+
 # Render one frame offscreen to target/frame.png, for inspecting visual output.
 # Wired to a real offscreen renderer in Stage 4.
 frame:

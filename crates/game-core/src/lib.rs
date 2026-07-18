@@ -10,7 +10,9 @@
 
 mod board;
 mod cell;
+mod evaluator;
 mod player;
+mod search;
 mod square;
 
 pub mod rng;
@@ -18,7 +20,9 @@ pub mod selfplay;
 
 pub use board::{Board, Outcome};
 pub use cell::Cell;
+pub use evaluator::Evaluator;
 pub use player::Player;
+pub use search::{search, SearchResult};
 pub use square::Square;
 
 /// Side length of the board in squares. Reversi is always 8x8.
