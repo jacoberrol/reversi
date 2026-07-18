@@ -1,0 +1,9 @@
+[package]
+name = "eval"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Position evaluation (heuristics now, ML later). Depends only on game-core.
+[dependencies]
+game-core.workspace = true

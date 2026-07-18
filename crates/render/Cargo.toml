@@ -1,0 +1,10 @@
+[package]
+name = "render"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# wgpu sprite batcher and atlas loading. Kept thin — no game logic. Reads
+# game-core state to draw it. wgpu/image deps arrive in Stage 4.
+[dependencies]
+game-core.workspace = true

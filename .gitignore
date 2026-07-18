@@ -1,0 +1,16 @@
+# Rust / Cargo build output
+/target
+**/*.rs.bk
+*.pdb
+
+# Cargo lockfile: keep it for the app binary (workspaces are applications here)
+# so builds are reproducible. If this becomes a published library, revisit.
+
+# Editor / OS cruft
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/settings.json
+
+# Rendered frames / scratch output produced by `just frame`
+/target/frame.png

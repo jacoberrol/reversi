@@ -1,0 +1,12 @@
+[package]
+name = "app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# winit shell: the only crate that may touch windowing. Wires the others
+# together. This is the binary the player runs (`just run`).
+[dependencies]
+game-core.workspace = true
+eval.workspace = true
+render.workspace = true

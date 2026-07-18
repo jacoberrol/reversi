@@ -1,0 +1,9 @@
+[package]
+name = "game-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Pure crate: std only, no internal or external dependencies. Everything here
+# must be testable via `cargo test` alone (see CLAUDE.md architecture rules).
+[dependencies]

@@ -1,0 +1,54 @@
+Read CLAUDE.md and DESIGN.md first. Then scaffold this project exactly as specified
+there. Work in the numbered stages below, and **stop at the end of each stage**, show
+me what you did and the verification output, and wait for my go-ahead before the next
+stage. If anything in these instructions seems to conflict with DESIGN.md, ask before
+proceeding.
+
+Stage 1 — Workspace skeleton
+- `git init`; sensible Rust `.gitignore`.
+- Cargo workspace with members `crates/game-core`, `crates/eval`, `crates/render`,
+  `crates/app`. Enforce the dependency direction from CLAUDE.md.
+- A `justfile` implementing every command listed in CLAUDE.md (stub `atlas` and
+  `frame` with a clear "not implemented yet" message for now; they get real in later
+  stages).
+- Empty `assets/src/`, `assets/atlas/`, `scripts/` directories with `.gitkeep`.
+- Verify: `just check` and `just test` pass on the empty workspace. Commit.
+
+Stage 2 — game-core: board and rules
+- Implement an 8x8 Othello/Reversi board: `Board`, `Cell`, `Player`, `Square` newtype,
+  move generation, disc flipping, pass handling, and terminal detection. Pure Rust,
+  no dependencies beyond std.
+- Property of the API: invalid squares and illegal moves must be unrepresentable or
+  return `Result`/`Option` — no panics in the public API.
+- Tests for: opening position has exactly 4 legal moves for Black; a known flip
+  scenario; forced pass; full-board and no-moves-for-both game end; and a
+  perft-style test that plays 1,000 random games to completion without panicking
+  and with disc counts always summing correctly.
+- Wire `just selfplay N` to a small binary or example in game-core.
+- Verify: `just check && just test && just selfplay 1000`. Commit.
+
+Stage 3 — eval + search
+- In `eval`: a handcrafted evaluation (corner control, mobility, disc parity — see
+  DESIGN.md) behind a trait, so an ML evaluator can slot in later.
+- In `game-core` or `eval` (your call, justify it): minimax with alpha-beta pruning
+  and a depth parameter. Depth is the difficulty setting.
+- Tests: search at depth 1 picks a corner when one is available; deeper search beats
+  shallower search over a 50-game match (statistical test, fixed seeds).
+- Verify: checks, tests, and show me the depth-vs-depth match results. Commit.
+
+Stage 4 — window and first pixels
+- `app`: winit window (main thread on macOS), wgpu setup, clear-color render loop,
+  resize/surface-loss handling per CLAUDE.md gotchas.
+- `render`: minimal sprite/quad batcher: instanced colored quads first, texture
+  support stubbed for later. Draw the 8x8 board as quads with the current game state,
+  procedural pieces as flat discs for now (the shader polish comes later).
+- Implement `just frame` (render one frame offscreen to `target/frame.png`) and use
+  it yourself to check the board renders correctly before telling me it works.
+- Mouse click → board square mapping so I can play moves against the depth-3 AI.
+- Verify: `just check && just test && just frame`, show me the PNG, then I'll
+  `just run` and play it. Commit.
+
+Constraints, restated so they're unmissable: no ECS, no Bevy, no async runtime,
+plain structs; keep files small; explain non-obvious wgpu concepts in comments as
+you go since I'm learning the API; commit at each stage boundary and never with
+failing checks.

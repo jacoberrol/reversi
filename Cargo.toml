@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/game-core",
+    "crates/eval",
+    "crates/render",
+    "crates/app",
+]
+
+# Metadata shared by every crate in the workspace. Individual crates inherit
+# these with `x.workspace = true` so the values live in exactly one place.
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+# Internal crates are referenced by path so the dependency direction is explicit
+# and enforced by cargo: app -> {render, eval} -> game-core, never the reverse.
+[workspace.dependencies]
+game-core = { path = "crates/game-core" }
+eval = { path = "crates/eval" }
+render = { path = "crates/render" }
