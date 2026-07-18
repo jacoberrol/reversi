@@ -40,7 +40,7 @@ pub fn apply_theme(ctx: &egui::Context) {
     v.widgets.inactive.weak_bg_fill = Color32::from_rgb(46, 52, 64);
     v.widgets.inactive.bg_fill = Color32::from_rgb(46, 52, 64);
     v.widgets.inactive.rounding = Rounding::same(8.0);
-    v.widgets.inactive.fg_stroke = Stroke::new(1.0, Color32::from_rgb(222, 226, 233));
+    v.widgets.inactive.fg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(222, 226, 233));
     v.widgets.hovered.weak_bg_fill = Color32::from_rgb(64, 72, 88);
     v.widgets.hovered.bg_fill = Color32::from_rgb(64, 72, 88);
     v.widgets.hovered.rounding = Rounding::same(8.0);
@@ -151,7 +151,7 @@ fn invite_modal(ctx: &egui::Context, from: PlayerId, name: &str, actions: &mut V
             Frame::none()
                 .fill(Color32::from_rgb(30, 36, 46))
                 .rounding(Rounding::same(12.0))
-                .stroke(Stroke::new(1.5, ACCENT))
+                .stroke(Stroke::new(1.5_f32, ACCENT))
                 .inner_margin(Margin::same(20.0))
                 .show(ui, |ui| {
                     ui.set_width(300.0);
