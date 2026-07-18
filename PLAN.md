@@ -127,9 +127,64 @@ stands up the **real relay topology** on localhost so it isn't throwaway. See DE
   offscreen (reviewed). `just demo` (two windows) is the live invite-and-play test.
 
 ### Stage 7 — later increments 🔮
-- 🔮 Increment 3: deploy the server to a cloud VM — add TLS, swap TCP→WebSocket behind the
-  connection seam (reusing `protocol`). Out of scope now: accounts/auth, reconnect, spectating, NAT.
+- 🔮 The cloud deploy (TLS + TCP→WebSocket) is now **Stage 8, Stage D** below — it comes *after*
+  extracting and hardening the netplay layer, so those land in the reusable home first.
 - 🔮 In-app name entry + a graphical main menu (name is a CLI arg for now); in-game egui HUD.
+
+### Stage 8 — Netplay: extraction & hardening 🔮
+Turn the Reversi-specific relay/lobby into a **reusable, authorized, rate-limited netplay layer**
+any 2-player turn-based game in the workspace can use, and add the safety controls it needs before
+facing the open internet. Extends DESIGN §9 (does not contradict it — reconcile §9 first if it ever
+seems to). Honest non-goal: this deters and provides clean seams; it does **not** make the client
+tamper-proof.
+
+**Design decisions (self-contained; the scratch `netplay-plan.md` will be deleted):**
+- **Reuse boundary via a workspace-internal crate split** (no new repo yet). The server already
+  relays game messages opaquely, so the seam largely exists:
+  - `netplay-protocol` — framing (`encode`/`decode`/`read_frame`, `MAX_FRAME`, version) + the generic
+    envelope (`Hello`/`Invite`/`Accept`/`Decline`/`Presence`/`Matched`/`OpponentLeft`/`Error`) + an
+    **opaque `Game` payload the server never decodes** + auth handshake types.
+  - `netplay-server` — today's relay/lobby actor almost verbatim; `Color` → **`Seat`** (`Seat(u8)`,
+    seat 0 = first to move); add the auth gate + rate limiting.
+  - `netplay-client` — today's `net.rs` transport (blocking TCP, `try_clone` split, read thread →
+    `EventLoopProxy`); the game owns its payload type.
+  - Reversi keeps `GameMsg`, seat↔player mapping (seat 0 = Black), `session.rs`, and all of
+    `game-core`/`eval`/`render`. (Rejected: generic `ClientMsg<P>` — leaks generics through the server
+    for no gain since it never inspects the payload.)
+- **Auth is a seam, not a token.** Server `Authenticator::verify(credential) -> Result<Identity, _>`
+  (called after the version check, **before** `Join`); client `AuthProvider::credential()`. `Hello`
+  gains a **versioned credential** (`{ key_id, token }`); `SharedTokenAuth` holds a small *set* of
+  valid keys so `N`/`N+1` coexist during rotation (rotation ships via app update). `Identity` stays
+  thin ("is this my app?", not "who is the user?"). Threat model: a client can't keep a secret
+  (extractable via `strings`/proxy) — so this is deterrence + a swap-in point for attestation, not
+  security to bet on. Plain token over TLS ≈ HMAC for less complexity (HMAC defends the wrong flank).
+- **Rate limiting**, server-side at the connection boundary, before the lobby; drop **and log** on
+  breach (silent throttling reads as "server broken"). Layers, all tunable `const`s in one place:
+  handshake timeout (~5s), per-IP concurrent cap (~8) + new-connection bucket (~10/10s), per-connection
+  inbound message bucket (~20/s, burst 40), existing `MAX_FRAME` (64 KiB), lobby caps (max players, max
+  pending invites/player). Auth and rate-limit are two separate seams applied in sequence.
+
+**Roadmap (ordering matters — extract first):**
+- 🔮 **Stage A — Extract `netplay-{protocol,server,client}`.** `Color`→`Seat`, opaque `Game` payload.
+  Behavior-preserving; adapt the existing relay + protocol tests.
+- 🔮 **Stage B — Auth seam.** `Authenticator`/`AuthProvider`, versioned credential in `Hello`,
+  `SharedTokenAuth` with a key-id'd token set. Thin `Identity`.
+- 🔮 **Stage C — Rate limiting.** Handshake timeout, per-IP caps, per-connection message bucket,
+  lobby caps. Drop + log.
+- 🔮 **Stage D — TLS + WebSocket transport swap** (executes DESIGN §9; the old "deploy" increment).
+  Makes the token respectable and unblocks internet deploy; payloads unchanged. B and C can land
+  before D; D is the prerequisite for calling the token production-respectable.
+- 🔮 **Stage E (later) — Attestation.** Swap `AuthProvider` to App Attest (iOS) / Play Integrity
+  (Android) behind the unchanged seam. Web-distributed macOS stays at token+TLS deterrence.
+
+**Deferred:** user accounts / persistent identity (the moment durable identity enters, the server
+gains a **DB** and stops being a stateless relay — the biggest inflection; lands behind the same
+`Authenticator` seam when a real need forces it); separate repo / published crate (until a second
+consumer exists); N-player / spectating / reconnect; client async / WASM browser client.
+
+**Open questions:** WASM/web client ever wanted (the only thing that would force client async)?
+token format (plain versioned random over TLS is likely enough); where the per-IP limiter lives
+(standalone type vs. folded into the lobby actor).
 
 ## Backlog / future (post-Stage 7) 🔮
 - 🔮 **Search: move ordering** in alpha-beta (try corners / high-mobility / previous-best moves first, or
@@ -180,3 +235,6 @@ Record notable plan/scope changes here so the "why" survives.
   for on-screen UI after a custom-vs-egui mockup bake-off. Protocol gains presence/invites; server lobby
   rewritten; `app` refactored to lib+bin with a Lobby/InGame screen state machine. `PointerInput` seam
   folded into `WindowState`. Verified via the invite-flow relay test + offscreen lobby render.
+- 2026-07-18 — Added **Stage 8** (netplay extraction + hardening): reusable `netplay-*` crates with a
+  `Seat`/opaque-payload boundary, an auth seam (versioned token), rate limiting, then TLS+WebSocket
+  (folds in the old deploy increment) and attestation later. Planned only; not started.
