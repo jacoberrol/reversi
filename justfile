@@ -16,7 +16,7 @@ run:
 
 # Run the relay/matchmaking server (localhost:5000 by default).
 serve ADDR="127.0.0.1:5000":
-    cargo run -p server -- {{ADDR}}
+    cargo run -p netplay-server -- {{ADDR}}
 
 # Launch the game in online mode, connecting to a relay server.
 # Two of these (with the same ADDR) auto-match and play each other.
@@ -32,8 +32,8 @@ demo:
     set -euo pipefail
     addr="127.0.0.1:5099"
     echo "building..."
-    cargo build -q -p server -p app
-    ./target/debug/server "${addr}" &
+    cargo build -q -p netplay-server -p app
+    ./target/debug/netplay-server "${addr}" &
     server_pid=$!
     trap 'kill "${server_pid}" 2>/dev/null || true' EXIT
     sleep 1

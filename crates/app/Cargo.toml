@@ -10,7 +10,12 @@ license.workspace = true
 game-core.workspace = true
 eval.workspace = true
 render.workspace = true
-protocol.workspace = true
+# Netplay: the reusable transport + protocol. The app defines its own GameMsg
+# and codes it (serde) into the opaque payload these carry.
+netplay-protocol.workspace = true
+netplay-client.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 wgpu.workspace = true
 winit.workspace = true
 egui.workspace = true

@@ -1,0 +1,12 @@
+[package]
+name = "netplay-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Reusable relay/matchmaking server. Pairs two clients and forwards their game
+# messages opaquely. Uses tokio; depends on `netplay-protocol` only — no game
+# logic, so any 2-player turn-based game can use it as-is.
+[dependencies]
+netplay-protocol.workspace = true
+tokio.workspace = true

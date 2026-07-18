@@ -126,6 +126,18 @@ Rust server on a cloud VM. We build the real topology now and stage toward that.
   gRPC: gRPC would force tokio onto the client and buys little for two Rust peers swapping
   one-byte moves.
 
+### Reusable netplay layer (extracted, Stage 8A)
+The relay/lobby/transport is a **game-agnostic layer** any 2-player turn-based game in the workspace
+can use, split into `netplay-protocol` / `netplay-server` / `netplay-client`. The boundary:
+- **Opaque game payload.** The envelope (`Hello`/`Invite`/`Accept`/`Decline`/`Presence`/`Matched`/…)
+  is generic; the in-game action rides as `Game(Vec<u8>)` the server never decodes. Reversi defines
+  `GameMsg` in `app` and (de)serializes it into that payload. (Rejected: a `ClientMsg<P>` generic —
+  leaks generics through a server that never inspects `P`.)
+- **`Seat`, not `Color`.** Matches carry `Seat(u8)` (seat 0 moves first); the game maps seat → its
+  player type (Reversi: seat 0 = Black). Keeps the relay game-agnostic.
+- Stays a workspace-internal crate (no separate repo / published crate until a second consumer
+  justifies the versioning overhead). Auth + rate limiting land next (Stage 8B/C), then TLS+WS (8D).
+
 ### UI: egui for menus/lobby (decided)
 On-screen text and the lobby use **egui** (`egui` + `egui-wgpu`, on our wgpu 0.20). We evaluated
 hand-rolling a bitmap-font + custom widgets (fits the "build the plumbing" ethos, unstubs textures)

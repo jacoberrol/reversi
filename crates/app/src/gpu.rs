@@ -8,8 +8,9 @@ use std::time::Instant;
 use render::{board_view, Renderer};
 use winit::window::Window;
 
+use netplay_client::{NetEvent, NetHandle};
+
 use crate::egui_layer::EguiLayer;
-use crate::net::{NetEvent, NetHandle};
 use crate::session::Session;
 
 pub struct WindowState {

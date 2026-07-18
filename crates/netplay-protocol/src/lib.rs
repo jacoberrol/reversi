@@ -1,15 +1,14 @@
-//! The wire protocol shared by the client (`app`) and the relay `server`.
+//! Game-agnostic wire protocol for the netplay layer.
 //!
-//! Messages use only primitive types (a move is a `u8` square index), so this
-//! crate depends on nothing but `serde` — the server never pulls in game logic,
-//! and `game-core` never gains a serialization dependency. `app` maps between
-//! [`Color`] and `game_core::Player`, and between `square: u8` and
-//! `game_core::Square`, at its boundary.
+//! The lobby/match envelope ([`ClientMsg`]/[`ServerMsg`]) is generic; the actual
+//! in-game action rides as an **opaque payload** (`Game(Vec<u8>)`) that the
+//! server never decodes. The game defines and codes its own message type and
+//! puts the bytes in that payload. Players are identified by an abstract
+//! [`Seat`] (seat 0 moves first); the game maps seat to its own player type.
 //!
 //! Framing is length-delimited: a big-endian `u32` byte count followed by that
-//! many bytes of JSON. JSON keeps the protocol easy to eyeball while debugging;
-//! the messages are tiny, so it's cheap. A binary codec can replace it later
-//! without touching call sites.
+//! many bytes of JSON (envelope) — tiny messages, easy to eyeball. Swappable for
+//! a binary codec later without touching call sites.
 
 use std::io::{self, Read, Write};
 
@@ -22,7 +21,7 @@ pub const PROTOCOL_VERSION: u16 = 1;
 
 /// Reject frames larger than this (messages are tiny; this guards against a bad
 /// or hostile length prefix causing a huge allocation).
-const MAX_FRAME: usize = 1 << 16;
+pub const MAX_FRAME: usize = 1 << 16;
 
 /// A connected player, for the lifetime of its connection.
 pub type PlayerId = u64;
@@ -34,26 +33,10 @@ pub struct PlayerInfo {
     pub name: String,
 }
 
-/// Which side a player controls. A primitive mirror of `game_core::Player`.
+/// An abstract seat in a match; seat 0 moves first. The game maps this to its
+/// own player type (e.g. Reversi: seat 0 = Black).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Color {
-    Black,
-    White,
-}
-
-/// An in-game action. Relayed opaquely by the server between the two players.
-///
-/// Passes are never sent: both clients derive forced passes locally from the
-/// board after each move, so only real placements cross the wire.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum GameMsg {
-    /// Place a disc on the square with this flat index (`0..64`).
-    Move { square: u8 },
-    /// Start a new game (both sides reset).
-    Restart,
-    /// Concede the game.
-    Resign,
-}
+pub struct Seat(pub u8);
 
 /// A message from a client to the server.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -66,8 +49,8 @@ pub enum ClientMsg {
     Accept { inviter: PlayerId },
     /// Decline an invite from `inviter`.
     Decline { inviter: PlayerId },
-    /// An in-game action, to be relayed to the opponent.
-    Game(GameMsg),
+    /// An opaque in-game payload, to be relayed to the opponent verbatim.
+    Game(Vec<u8>),
 }
 
 /// A message from the server to a client.
@@ -79,10 +62,10 @@ pub enum ServerMsg {
     Invited { from: PlayerId, name: String },
     /// An invite you sent was declined by player `by`.
     InviteDeclined { by: PlayerId },
-    /// Paired with an opponent; you play `your_color`.
-    Matched { your_color: Color, opponent: String },
-    /// An in-game action from the opponent.
-    Game(GameMsg),
+    /// Paired with an opponent; you take `seat` (seat 0 moves first).
+    Matched { seat: Seat, opponent: String },
+    /// An opaque in-game payload from the opponent.
+    Game(Vec<u8>),
     /// The opponent disconnected or resigned.
     OpponentLeft,
     /// A protocol-level error (e.g. version mismatch); the connection closes.
@@ -152,9 +135,7 @@ mod tests {
         round_trip_client(ClientMsg::Invite { to: 7 });
         round_trip_client(ClientMsg::Accept { inviter: 7 });
         round_trip_client(ClientMsg::Decline { inviter: 7 });
-        round_trip_client(ClientMsg::Game(GameMsg::Move { square: 19 }));
-        round_trip_client(ClientMsg::Game(GameMsg::Restart));
-        round_trip_client(ClientMsg::Game(GameMsg::Resign));
+        round_trip_client(ClientMsg::Game(vec![1, 2, 3]));
     }
 
     #[test]
@@ -178,10 +159,10 @@ mod tests {
             },
             ServerMsg::InviteDeclined { by: 1 },
             ServerMsg::Matched {
-                your_color: Color::Black,
+                seat: Seat(0),
                 opponent: "Bob".into(),
             },
-            ServerMsg::Game(GameMsg::Move { square: 42 }),
+            ServerMsg::Game(vec![9, 8, 7]),
             ServerMsg::OpponentLeft,
             ServerMsg::Error("bad version".into()),
         ] {
@@ -198,17 +179,5 @@ mod tests {
     fn clean_eof_returns_none() {
         let mut empty = Cursor::new(Vec::new());
         assert!(read_frame(&mut empty).unwrap().is_none());
-    }
-
-    #[test]
-    fn two_frames_read_in_order() {
-        let mut buf = Vec::new();
-        write_msg(&mut buf, &ClientMsg::Game(GameMsg::Move { square: 1 })).unwrap();
-        write_msg(&mut buf, &ClientMsg::Game(GameMsg::Move { square: 2 })).unwrap();
-        let mut cursor = Cursor::new(buf);
-        let first: ClientMsg = decode(&read_frame(&mut cursor).unwrap().unwrap()).unwrap();
-        let second: ClientMsg = decode(&read_frame(&mut cursor).unwrap().unwrap()).unwrap();
-        assert_eq!(first, ClientMsg::Game(GameMsg::Move { square: 1 }));
-        assert_eq!(second, ClientMsg::Game(GameMsg::Move { square: 2 }));
     }
 }

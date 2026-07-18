@@ -1,16 +1,18 @@
-//! Client networking: a blocking TCP connection to the relay server.
+//! Reusable client transport for the netplay layer.
 //!
-//! The client stays async-free. `TcpStream::try_clone` splits the socket into an
-//! independent read half and write half: a background thread blocks on reads and
-//! forwards decoded messages to the winit event loop via an [`EventLoopProxy`]
-//! (delivered as [`NetEvent`]s), while the main thread writes outgoing moves
-//! through [`NetHandle`]. No locks, no runtime.
+//! Async-free: `TcpStream::try_clone` splits the socket into an independent read
+//! half and write half. A background thread blocks on reads and forwards decoded
+//! [`NetEvent`]s to the winit event loop via an [`EventLoopProxy`]; the main
+//! thread writes outgoing messages through [`NetHandle`]. No locks, no runtime.
+//!
+//! The in-game action is opaque here: [`NetHandle::game`] sends a `Vec<u8>` and
+//! [`NetEvent::Game`] delivers one. The game defines and codes its own payload.
 
 use std::io::{self, Write};
 use std::net::TcpStream;
 use std::thread;
 
-use protocol::{ClientMsg, Color, GameMsg, PlayerId, PlayerInfo, ServerMsg, PROTOCOL_VERSION};
+use netplay_protocol::{ClientMsg, PlayerId, PlayerInfo, Seat, ServerMsg, PROTOCOL_VERSION};
 use winit::event_loop::EventLoopProxy;
 
 /// A message from the network, injected into the winit event loop as a user
@@ -23,10 +25,10 @@ pub enum NetEvent {
     Invited { from: PlayerId, name: String },
     /// An invite you sent was declined.
     InviteDeclined { by: PlayerId },
-    /// Paired with an opponent; the local player controls `color`.
-    Matched { color: Color, opponent: String },
-    /// An in-game message from the opponent.
-    Remote(GameMsg),
+    /// Paired with an opponent; you take `seat` (seat 0 moves first).
+    Matched { seat: Seat, opponent: String },
+    /// An opaque in-game payload from the opponent.
+    Game(Vec<u8>),
     /// The opponent disconnected or resigned (server-side).
     OpponentLeft,
     /// The connection closed.
@@ -35,16 +37,16 @@ pub enum NetEvent {
     Error(String),
 }
 
-/// The write side of the connection. Held by the main thread to send moves.
+/// The write side of the connection. Held by the main thread to send messages.
 pub struct NetHandle {
     writer: TcpStream,
 }
 
 impl NetHandle {
-    /// Send an in-game message to the opponent (best effort; a broken connection
-    /// surfaces as [`NetEvent::Disconnected`] on the read thread).
-    pub fn send(&mut self, msg: GameMsg) {
-        self.send_client(ClientMsg::Game(msg));
+    /// Send an opaque in-game payload to the opponent (best effort; a broken
+    /// connection surfaces as [`NetEvent::Disconnected`] on the read thread).
+    pub fn game(&mut self, payload: Vec<u8>) {
+        self.send_client(ClientMsg::Game(payload));
     }
 
     /// Invite another player (by id) to a game.
@@ -63,7 +65,7 @@ impl NetHandle {
     }
 
     fn send_client(&mut self, msg: ClientMsg) {
-        let _ = protocol::write_msg(&mut self.writer, &msg);
+        let _ = netplay_protocol::write_msg(&mut self.writer, &msg);
         let _ = self.writer.flush();
     }
 }
@@ -74,7 +76,7 @@ pub fn connect(addr: &str, name: &str, proxy: EventLoopProxy<NetEvent>) -> io::R
     let read_half = TcpStream::connect(addr)?;
     let mut writer = read_half.try_clone()?;
 
-    protocol::write_msg(
+    netplay_protocol::write_msg(
         &mut writer,
         &ClientMsg::Hello {
             name: name.to_string(),
@@ -89,8 +91,8 @@ pub fn connect(addr: &str, name: &str, proxy: EventLoopProxy<NetEvent>) -> io::R
 
 fn read_loop(mut reader: TcpStream, proxy: EventLoopProxy<NetEvent>) {
     loop {
-        let event = match protocol::read_frame(&mut reader) {
-            Ok(Some(body)) => match protocol::decode::<ServerMsg>(&body) {
+        let event = match netplay_protocol::read_frame(&mut reader) {
+            Ok(Some(body)) => match netplay_protocol::decode::<ServerMsg>(&body) {
                 Ok(msg) => server_msg_to_event(msg),
                 Err(_) => NetEvent::Error("malformed message from server".to_string()),
             },
@@ -116,23 +118,9 @@ fn server_msg_to_event(msg: ServerMsg) -> NetEvent {
         ServerMsg::Presence { players } => NetEvent::Presence(players),
         ServerMsg::Invited { from, name } => NetEvent::Invited { from, name },
         ServerMsg::InviteDeclined { by } => NetEvent::InviteDeclined { by },
-        ServerMsg::Matched {
-            your_color,
-            opponent,
-        } => NetEvent::Matched {
-            color: your_color,
-            opponent,
-        },
-        ServerMsg::Game(game) => NetEvent::Remote(game),
+        ServerMsg::Matched { seat, opponent } => NetEvent::Matched { seat, opponent },
+        ServerMsg::Game(payload) => NetEvent::Game(payload),
         ServerMsg::OpponentLeft => NetEvent::OpponentLeft,
         ServerMsg::Error(message) => NetEvent::Error(message),
-    }
-}
-
-/// Map a protocol color to a game-core player.
-pub fn player_of(color: Color) -> game_core::Player {
-    match color {
-        Color::Black => game_core::Player::Black,
-        Color::White => game_core::Player::White,
     }
 }

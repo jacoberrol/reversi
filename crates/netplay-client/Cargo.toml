@@ -1,0 +1,12 @@
+[package]
+name = "netplay-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Reusable client transport for the netplay layer: a blocking TCP connection on
+# a background thread that feeds decoded events into a winit event loop. The game
+# supplies and interprets the opaque game payload; this crate has no game logic.
+[dependencies]
+netplay-protocol.workspace = true
+winit.workspace = true
