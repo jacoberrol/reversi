@@ -52,7 +52,13 @@ Pure Rust, std only, no panics in the public API (invalid squares / illegal move
 - ⬜ `app`: winit window (main thread on macOS), wgpu setup, clear-color loop, resize/surface-loss handling
 - ⬜ `render`: instanced colored-quad batcher (texture support stubbed); draw the 8×8 board + procedural flat discs
 - ⬜ Implement `just frame` (offscreen render → `target/frame.png`); self-check the PNG before claiming it works
-- ⬜ Mouse click → board square mapping; play vs. the depth-3 AI
+- ⬜ **Input abstraction (port-ready).** Normalize platform events into one internal `PointerInput`
+  (board-space point + press/release phase) in `app`, so macOS mouse and future iOS touch share one path:
+  - ⬜ macOS now: map winit `MouseInput` + `CursorMoved` → `PointerInput`
+  - ⬜ iOS later: map winit `Touch` → the same `PointerInput` (no changes below `app`)
+  - ⬜ `render` exposes board geometry (draw layout) so `app` can hit-test pixel → `Square` (the inverse)
+  - ⬜ `game-core` only ever receives a `Square` — stays input-agnostic
+- ⬜ Wire it up: human `PointerInput` → move via `game-core`, then AI reply via `eval` (depth 3) → redraw
 - ⬜ Verify: `just check && just test && just frame`, review PNG, then `just run`
 
 ## Backlog / future (post-Stage 4) 🔮
@@ -71,4 +77,6 @@ Record notable plan/scope changes here so the "why" survives.
   (Reversi has no levels). Confirmed plain structs over ECS. See DESIGN §1, §5, §8.
 - 2026-07-18 — Scoped v1 to **procedural graphics only**; the diffusion/Aseprite sprite
   pipeline (DESIGN §6) is deferred until the game is fun. See DESIGN §6, §8.
+- 2026-07-18 — Adopted a **`PointerInput` abstraction** in `app` (mouse now, touch later) so the
+  macOS→iOS port only touches that layer; `game-core` stays `Square`-only. See DESIGN §8, PLAN Stage 4.
 - 2026-07-18 — Repo made public to enable free branch protection; PR-only + squash-only flow on `main`.

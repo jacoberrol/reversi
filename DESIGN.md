@@ -93,6 +93,7 @@ Draw Things exposes JavaScript batch automation and an MCP server usable from Cl
 - **Game mechanic: Reversi (Othello), 8×8.** Previously the biggest open question; now committed (see §1).
 - **Game state: plain structs, no ECS.** Reversi's fixed 8×8 board carries too little entity variety to justify an ECS; plain structs keep `game-core` dependency-free and trivially unit-testable. (No Bevy either — see §7.)
 - **First iteration: procedural graphics only.** Solid-color quads and shader-drawn discs; the diffusion/Aseprite sprite pipeline (§6) is deferred until the game is fun. The atlas/batcher abstraction is still built so real art drops in later without code changes.
+- **Input via a `PointerInput` abstraction, for portability.** Platform events are normalized in `app` to one internal `PointerInput` (a board-space point + a press/release phase): winit `MouseInput`/`CursorMoved` on macOS today, winit `Touch` on iOS later. `app` hit-tests that point to a `Square` using board geometry exposed by `render` (the inverse of the draw layout); `game-core` only ever receives a `Square` and stays input-agnostic. Net effect: the macOS→iOS port is confined to the thin event-normalization layer in `app` — rules, eval, and rendering are untouched. (Honors the "touch from day one" intent in §2.)
 
 ### Still open
 - [ ] Art direction: pixel art vs. HD/vector-ish procedural look (affects LoRA choice and atlas resolution)
