@@ -41,26 +41,46 @@ Other recipes (`atlas` is stubbed until the deferred sprite pipeline — see [PL
 | Command | What it does |
 |---|---|
 | `just run` | Launch the game window and play Black vs. the AI (White). Click a difficulty button (or press `1`–`4`); at game over, click the board or press `R` for a new game. The title bar shows turn, difficulty, and result. |
+| `just serve [ADDR]` | Run the multiplayer relay server (default `127.0.0.1:5000`). |
+| `just play [ADDR] [NAME]` | Launch the game in online mode, connecting to a relay. |
 | `just selfplay N` | Headless: play N random self-play games. |
 | `just matchup [DEEP] [SHALLOW] [GAMES]` | Play a depth-vs-depth AI match and print the score. |
 | `just frame` | Render one board frame to `target/frame.png` for visual inspection. |
 | `just atlas` | Rebuild the texture atlas via Aseprite CLI (deferred; see DESIGN §6). |
 
+### Multiplayer (LAN / localhost)
+
+Two players connect to a small relay server, which auto-pairs them. On one machine, use three
+terminals:
+
+```sh
+just serve                       # start the relay on 127.0.0.1:5000
+just play 127.0.0.1:5000 Alice   # window 1 (becomes Black)
+just play 127.0.0.1:5000 Bob     # window 2 (becomes White)
+```
+
+The first two players to connect are matched automatically. Across two Macs on the same Wi-Fi,
+run `just serve 0.0.0.0:5000` on one and `just play <that-Mac's-IP>:5000 <name>` on each. See
+[DESIGN.md §9](DESIGN.md) for the architecture and the road to internet play.
+
 ## Project layout
 
-A Cargo workspace of four crates with a strict, one-directional dependency graph
-(`app → {render, eval} → game-core`, never the reverse):
+A Cargo workspace with a strict, one-directional dependency graph
+(`app → {render, eval, protocol} → game-core`; `server → protocol`; never the reverse):
 
 | Crate | Responsibility | Depends on |
 |---|---|---|
 | `crates/game-core` | Board, rules, move generation, search. **Pure** (std only, no I/O). | — |
 | `crates/eval` | Position evaluation (heuristics now, ML later) behind a trait. | game-core |
 | `crates/render` | `wgpu` sprite/quad batcher and board geometry. No game logic. | game-core |
-| `crates/app` | `winit` shell + input; the only crate that touches windowing. | render, eval, game-core |
+| `crates/protocol` | Multiplayer wire format (serde). Primitive types only. | — |
+| `crates/app` | `winit` shell + input + client networking; the only crate that touches windowing. | render, eval, protocol, game-core |
+| `crates/server` | Relay/matchmaking server (`tokio`). Relays messages opaquely. | protocol |
 
 Keeping `game-core` and `eval` pure means the rules and AI are fully testable with
-`cargo test` alone, and the eventual iOS port is confined to the input/windowing layer
-in `app` (see the `PointerInput` note in DESIGN §8).
+`cargo test` alone; I/O and async live only in `app` (client, async-free) and `server`
+(tokio). The eventual iOS port is confined to the input/windowing layer in `app` (see the
+`PointerInput` note in DESIGN §8), and the networking is transport-swappable (DESIGN §9).
 
 ## Development workflow
 

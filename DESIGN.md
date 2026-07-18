@@ -100,3 +100,33 @@ Draw Things exposes JavaScript batch automation and an MCP server usable from Cl
 - [ ] Audio stack (e.g. `kira`, `rodio`) — undecided
 - [ ] First ML experiment: a learned evaluator to augment/replace the handcrafted heuristic, vs. an opponent policy net
 - [ ] Distribution/licensing check before shipping any Flux.1 Dev-derived asset
+
+## 9. Networking & multiplayer
+
+North star: **named users discover each other and play over the internet** via a small
+Rust server on a cloud VM. We build the real topology now and stage toward that.
+
+- **Relay topology, not direct peer-to-peer.** Both clients dial *out* to a server, which
+  pairs them and forwards their game messages. This sidesteps NAT (no hole-punching) and
+  means the game-session protocol is identical on LAN and over the internet — direct P2P
+  pairing would have been thrown away. (Increment 1 runs the server on localhost.)
+- **Deterministic sync via move exchange.** Each client applies moves to its own pure,
+  deterministic `game-core`; the server relays messages opaquely. Ordered TCP + determinism
+  ⇒ boards can't drift. Forced passes are derived locally on both sides (never sent).
+- **A shared `protocol` crate (serde).** One source of truth for the wire format, reused by
+  the client and the server. Primitive fields only (a move is a `u8`), so `game-core` never
+  gains a serialization dependency and the server never depends on game logic.
+- **Server: tokio; client: async-free.** The relay is a separate binary and uses tokio
+  (per-connection tasks + an in-memory lobby actor). The client keeps CLAUDE.md's "no async
+  runtime": one blocking TCP connection, a background read thread feeding the winit event
+  loop via `EventLoopProxy`, `TcpStream::try_clone` for a lock-free read/write split.
+- **Transport is swappable behind the connection seam.** Raw TCP + length-delimited JSON
+  frames now (localhost). WebSocket + TLS at internet-deploy time (firewall traversal over
+  443) — reusing the same `protocol` payloads, so game code is untouched. WebSocket, not
+  gRPC: gRPC would force tokio onto the client and buys little for two Rust peers swapping
+  one-byte moves.
+
+### Staged (later increments)
+- Named presence + invite (a real lobby UI; the first on-screen text renderer).
+- Deploy to a cloud VM: add TLS, swap TCP→WebSocket behind the connection seam.
+- Out of scope for now: accounts/auth, reconnect, spectating, NAT traversal.

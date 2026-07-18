@@ -10,9 +10,18 @@ default:
 test:
     cargo test --workspace
 
-# Launch the game (debug build).
+# Launch the game vs the AI (debug build).
 run:
     cargo run -p app
+
+# Run the relay/matchmaking server (localhost:5000 by default).
+serve ADDR="127.0.0.1:5000":
+    cargo run -p server -- {{ADDR}}
+
+# Launch the game in online mode, connecting to a relay server.
+# Two of these (with the same ADDR) auto-match and play each other.
+play ADDR="127.0.0.1:5000" NAME="Player":
+    cargo run -p app -- --server {{ADDR}} --name {{NAME}}
 
 # Pre-commit gate: formatting must be clean and clippy must be warning-free.
 # `-D warnings` promotes every clippy lint to an error. Must pass before commit.

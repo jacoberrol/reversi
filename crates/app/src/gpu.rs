@@ -1,22 +1,21 @@
-//! Per-window GPU state: surface, device, the [`Renderer`], and the game it draws.
+//! Per-window GPU state: surface, device, the [`Renderer`], and the [`Session`]
+//! it draws. Game/network logic lives in `session`; this file is wgpu + winit.
 //!
 //! wgpu concepts in brief:
-//! - **surface**: the swapchain of images the window presents. It becomes
-//!   invalid on resize / display change and must be reconfigured (handled in
-//!   [`WindowState::render`]).
-//! - **device / queue**: the logical GPU and its command submission queue.
-//! - **config**: format + size the surface is currently configured for.
+//! - **surface**: the swapchain the window presents; invalid on resize/display
+//!   change and reconfigured in [`WindowState::render`].
+//! - **device / queue**: the logical GPU and its submission queue.
+//! - **config**: format + size the surface is configured for.
 
 use std::sync::Arc;
 use std::time::Instant;
 
-use game_core::{Outcome, Player};
 use render::{board_view, Renderer};
 use winit::window::Window;
 
-use crate::anim::Animator;
-use crate::game::{Difficulty, Game};
 use crate::input::{Phase, PointerInput};
+use crate::net::{NetEvent, NetHandle};
+use crate::session::Session;
 
 pub struct WindowState {
     window: Arc<Window>,
@@ -25,8 +24,7 @@ pub struct WindowState {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     renderer: Renderer,
-    game: Game,
-    animator: Animator,
+    session: Session,
     /// Last known cursor position (physical pixels); winit's click event doesn't
     /// carry a position, so we track it from cursor-moved events.
     cursor: [f32; 2],
@@ -40,7 +38,6 @@ impl WindowState {
             backends: wgpu::Backends::all(),
             ..Default::default()
         });
-        // Arc<Window> gives the surface a 'static lifetime tied to the window.
         let surface = instance
             .create_surface(window.clone())
             .expect("create surface");
@@ -63,8 +60,6 @@ impl WindowState {
         .expect("failed to create device");
 
         let caps = surface.get_capabilities(&adapter);
-        // Prefer a non-sRGB format so on-screen colours match the offscreen
-        // frame; fall back to whatever the surface prefers.
         let format = caps
             .formats
             .iter()
@@ -77,7 +72,7 @@ impl WindowState {
             format,
             width: size.width.max(1),
             height: size.height.max(1),
-            present_mode: wgpu::PresentMode::Fifo, // vsync; universally supported
+            present_mode: wgpu::PresentMode::Fifo,
             alpha_mode: caps.alpha_modes[0],
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
@@ -86,26 +81,22 @@ impl WindowState {
 
         let renderer = Renderer::new(&device, format);
 
-        let state = Self {
+        Self {
             window,
             surface,
             device,
             queue,
             config,
             renderer,
-            game: Game::new(),
-            animator: Animator::default(),
+            session: Session::new(),
             cursor: [0.0, 0.0],
-        };
-        state.update_title();
-        state
+        }
     }
 
     pub fn request_redraw(&self) {
         self.window.request_redraw();
     }
 
-    /// Reconfigure the surface for a new window size.
     pub fn resize(&mut self, width: u32, height: u32) {
         if width > 0 && height > 0 {
             self.config.width = width;
@@ -122,114 +113,70 @@ impl WindowState {
         self.cursor
     }
 
-    /// Start a new game.
-    pub fn restart(&mut self) {
-        self.animator.clear();
-        self.game.restart();
-        self.update_title();
+    // --- session delegation ---------------------------------------------
+
+    pub fn enter_network(&mut self, handle: NetHandle) {
+        self.session.enter_network(handle);
     }
 
-    /// Select difficulty by button index (`0..4`). Returns whether it changed.
+    pub fn set_net_error(&mut self, message: String) {
+        self.session.set_net_error(message);
+    }
+
+    pub fn on_net_event(&mut self, event: NetEvent) -> bool {
+        self.session.on_net_event(event)
+    }
+
+    pub fn restart(&mut self) {
+        self.session.restart();
+    }
+
     pub fn set_difficulty_index(&mut self, index: usize) -> bool {
-        match Difficulty::from_index(index) {
-            Some(difficulty) => {
-                self.game.set_difficulty(difficulty);
-                self.update_title();
-                true
-            }
-            None => false,
-        }
+        self.session.set_difficulty_index(index)
     }
 
     /// Handle a pointer event. Returns `true` if something changed (redraw
-    /// needed). Clicks route to the difficulty buttons, then to restart (when the
-    /// game is over), then to placing a move.
+    /// needed).
     pub fn handle_pointer(&mut self, input: PointerInput) -> bool {
         if input.phase != Phase::Pressed {
             return false;
         }
         let layout = board_view::layout(self.config.width as f32, self.config.height as f32);
 
-        if let Some(index) = board_view::difficulty_button_at(&layout, input.x, input.y) {
-            return self.set_difficulty_index(index);
+        // Difficulty buttons exist only in single-player mode.
+        if !self.session.is_network() {
+            if let Some(index) = board_view::difficulty_button_at(&layout, input.x, input.y) {
+                return self.session.set_difficulty_index(index);
+            }
         }
 
-        // Ignore board input while a move is still animating.
-        if self.animator.is_active() {
-            return false;
+        match board_view::square_at(&layout, input.x, input.y) {
+            Some(sq) => self.session.click_square(sq),
+            None => false,
         }
-
-        if self.game.is_over() {
-            self.restart();
-            return true;
-        }
-
-        let Some(sq) = board_view::square_at(&layout, input.x, input.y) else {
-            return false;
-        };
-        let transitions = self.game.play_human(sq);
-        if transitions.is_empty() {
-            return false;
-        }
-        self.animator.push(transitions);
-        self.update_title();
-        true
     }
 
-    /// Reflect the current state in the window title (our stand-in for on-screen
-    /// text until a glyph renderer exists).
-    fn update_title(&self) {
-        let (human, ai) = self.game.score();
-        let status = match self.game.outcome() {
-            Some(Outcome::Win(Player::Black)) => {
-                format!("You win {human}\u{2013}{ai} \u{00b7} click board for a new game")
-            }
-            Some(Outcome::Win(Player::White)) => {
-                format!("AI wins {ai}\u{2013}{human} \u{00b7} click board for a new game")
-            }
-            Some(Outcome::Draw) => {
-                format!("Draw {human}\u{2013}{ai} \u{00b7} click board for a new game")
-            }
-            None => "Your move".to_string(),
-        };
-        self.window.set_title(&format!(
-            "Reversi \u{2014} {status} \u{00b7} {}",
-            self.game.difficulty().name()
-        ));
-    }
-
-    /// Draw the current board to the window.
+    /// Draw the current state to the window.
     pub fn render(&mut self) {
         let frame = match self.surface.get_current_texture() {
             Ok(frame) => frame,
-            // Surface lost/outdated (resize, display change): reconfigure and
-            // skip this frame rather than panicking.
             Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
                 self.surface.configure(&self.device, &self.config);
                 return;
             }
-            // Timeout / out-of-memory: skip this frame.
             Err(_) => return,
         };
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
+        // Keep the title in sync with state (our text stand-in).
+        self.window.set_title(&self.session.title());
+
         let size = [self.config.width as f32, self.config.height as f32];
         let layout = board_view::layout(size[0], size[1]);
-
-        // If an animation is playing, draw its intermediate board with the live
-        // disc animations; otherwise draw the current game state.
-        let (board, anims) = match self.animator.frame(Instant::now()) {
-            Some((board, anims)) => (board, anims),
-            None => (self.game.board().clone(), Vec::new()),
-        };
-        let animating = !anims.is_empty();
-        let scene = board_view::View {
-            show_hints: !animating && self.game.awaiting_human(),
-            selected_difficulty: self.game.difficulty().index(),
-            outcome: if animating { None } else { self.game.outcome() },
-        };
+        let (board, anims) = self.session.frame(Instant::now());
+        let scene = self.session.view(!anims.is_empty());
         let instances = board_view::scene(&board, &layout, &scene, &anims);
         self.renderer.prepare(&self.queue, size, &instances);
 
@@ -256,9 +203,8 @@ impl WindowState {
         self.queue.submit(std::iter::once(encoder.finish()));
         frame.present();
 
-        // Keep the frames coming while an animation is in flight; when it ends,
-        // `is_active` goes false and we fall back to redraw-on-event.
-        if self.animator.is_active() {
+        // Keep frames coming while a move animates.
+        if self.session.is_animating() {
             self.request_redraw();
         }
     }
