@@ -50,21 +50,30 @@ Pure Rust, std only, no panics in the public API (invalid squares / illegal move
 - ✅ Tests: depth-1 takes an available corner; deeper (d3) beats shallower (d1) over a seeded 50-game match
 - ✅ Verify: checks + tests + `just matchup` → **depth 3 beat depth 1: 46–3–1 (94% of decisive games)**
 
-### Stage 4 — window & first pixels 🚧 (next)
-- ⬜ `app`: winit window (main thread on macOS), wgpu setup, clear-color loop, resize/surface-loss handling
-- ⬜ `render`: instanced colored-quad batcher (texture support stubbed); draw the 8×8 board + procedural flat discs
-- ⬜ Implement `just frame` (offscreen render → `target/frame.png`); self-check the PNG before claiming it works
-- ⬜ **Input abstraction (port-ready).** Normalize platform events into one internal `PointerInput`
-  (board-space point + press/release phase) in `app`, so macOS mouse and future iOS touch share one path:
-  - ⬜ macOS now: map winit `MouseInput` + `CursorMoved` → `PointerInput`
-  - ⬜ iOS later: map winit `Touch` → the same `PointerInput` (no changes below `app`)
-  - ⬜ `render` exposes board geometry (draw layout) so `app` can hit-test pixel → `Square` (the inverse)
-  - ⬜ `game-core` only ever receives a `Square` — stays input-agnostic
-- ⬜ Wire it up: human `PointerInput` → move via `game-core`, then AI reply via `eval` (depth 3) → redraw
-- ⬜ Verify: `just check && just test && just frame`, review PNG, then `just run`
+### Stage 4 — window & first pixels ✅
+- ✅ `app`: winit 0.30 window (event loop on the main thread), wgpu 0.20 setup, `ControlFlow::Wait`
+  render loop, resize + surface `Lost/Outdated` reconfigure (no panics)
+- ✅ `render`: instanced colored-quad batcher (one pipeline, `MAX_INSTANCES` buffer; texture support
+  still stubbed); draws the 8×8 board (backing + cells + grid gaps), procedural flat discs (SDF circle
+  with a soft edge in the fragment shader), and translucent legal-move hints
+- ✅ `just frame` → offscreen render to `target/frame.png` (headless wgpu, texture readback, `image` PNG
+  encode); self-checked the PNG (opening + 1 move shows both colours + hints correctly)
+- ✅ **Input abstraction (port-ready).** `PointerInput { x, y, phase }` in `app`:
+  - ✅ macOS now: winit `MouseInput` (+ tracked `CursorMoved`) → `PointerInput`
+  - ✅ iOS later: winit `Touch` → the same `PointerInput` (no changes below `app`)
+  - ✅ `render::board_view` owns the layout; `square_at` is the pixel→`Square` inverse for hit-testing
+  - ✅ `game-core` only ever receives a `Square`
+- ✅ Wire-up: human `PointerInput` → `game-core` move → `eval` reply (**depth 6**, see note) → redraw
+- ✅ Verify: `just check && just test && just frame` (PNG reviewed). `just run` is the interactive play test.
+
+> Depth note: bumped the AI from the originally-planned depth 3 to **depth 6** (`app::game::AI_DEPTH`).
+> The Stage-3 benchmark showed depth 6 is ~0.2s worst case on this hardware — instant and much stronger.
 
 ## Backlog / future (post-Stage 4) 🔮
-- 🔮 Shader polish for procedural discs (SDF circle + highlight + rim), flip/settle animation
+- 🔮 Game-over UI (winner/score banner) and a restart control — v1 has no end-of-game screen yet
+- 🔮 Difficulty selector mapped to search depth (Easy 2 / Medium 4 / Hard 6 / Expert 7–8)
+- 🔮 Iterative deepening with a per-move time budget + endgame solver (bounded latency, perfect endgame)
+- 🔮 Shader polish for procedural discs (highlight + rim), flip/settle animation
 - 🔮 **Deferred sprite pipeline (not v1):** real `just atlas` via Aseprite CLI for tiles/backgrounds
   (requires `aseprite` on PATH), plus the diffusion generation steps in DESIGN §6
 - 🔮 **Deferred sprite pipeline (not v1):** texture-backed sprites through the batcher (unstub texture support)
@@ -90,3 +99,6 @@ Record notable plan/scope changes here so the "why" survives.
 - 2026-07-18 — Stage 3 complete: negamax + alpha-beta search and the `Evaluator` trait in `game-core`
   (per CLAUDE.md), handcrafted `Heuristic` in `eval`. Depth = difficulty. Depth 3 beats depth 1 46–3–1.
   Added `just matchup` to visualize strength-vs-depth.
+- 2026-07-18 — Stage 4 complete: winit/wgpu window + `render` quad batcher (pinned wgpu 0.20 / winit 0.30).
+  `just frame` renders headless to a PNG for self-verification. `PointerInput` input abstraction lands.
+  AI default set to depth 6 (instant, per benchmark). First external deps enter the tree.

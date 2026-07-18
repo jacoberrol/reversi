@@ -36,13 +36,14 @@ just check      # cargo fmt --check + clippy -D warnings (the pre-commit gate)
 just test       # run the workspace test suite
 ```
 
-Other recipes (some are stubbed until their stage lands — see [PLAN.md](PLAN.md)):
+Other recipes (`atlas` is stubbed until the deferred sprite pipeline — see [PLAN.md](PLAN.md)):
 
 | Command | What it does |
 |---|---|
-| `just run` | Launch the game (window arrives in Stage 4). |
-| `just selfplay N` | Headless: play N random self-play games (Stage 2). |
-| `just frame` | Render one frame to `target/frame.png` for visual inspection (Stage 4). |
+| `just run` | Launch the game window and play Black vs. the AI (White). |
+| `just selfplay N` | Headless: play N random self-play games. |
+| `just matchup [DEEP] [SHALLOW] [GAMES]` | Play a depth-vs-depth AI match and print the score. |
+| `just frame` | Render one board frame to `target/frame.png` for visual inspection. |
 | `just atlas` | Rebuild the texture atlas via Aseprite CLI (deferred; see DESIGN §6). |
 
 ## Project layout

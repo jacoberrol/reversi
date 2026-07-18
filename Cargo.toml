@@ -20,3 +20,11 @@ license = "MIT OR Apache-2.0"
 game-core = { path = "crates/game-core" }
 eval = { path = "crates/eval" }
 render = { path = "crates/render" }
+
+# Graphics/windowing stack (Stage 4). Pinned once here so every crate agrees on
+# a version — wgpu and winit must share the same raw-window-handle generation.
+wgpu = "0.20"
+winit = "0.30"
+pollster = "0.3"                                          # block_on for wgpu's few async calls (no async runtime)
+bytemuck = { version = "1", features = ["derive"] }      # cast POD structs to GPU byte buffers, no unsafe
+image = { version = "0.25", default-features = false, features = ["png"] }  # encode target/frame.png
