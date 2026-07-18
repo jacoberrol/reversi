@@ -9,6 +9,13 @@ use game_core::{search, Board, Outcome, Player, Square};
 /// The human plays Black (which moves first); the AI plays White.
 pub const HUMAN: Player = Player::Black;
 
+/// One move's board change: the position before and after. The animator diffs
+/// these into per-disc animations.
+pub struct Transition {
+    pub before: Board,
+    pub after: Board,
+}
+
 /// AI difficulty, mapped to a search depth (how many plies it looks ahead).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Difficulty {
@@ -111,26 +118,35 @@ impl Game {
         !self.board.is_terminal() && self.board.to_move() == HUMAN
     }
 
-    /// Attempt the human's move at `sq`. Returns `true` if it was legal and
-    /// applied — in which case the AI has already replied — and `false` for an
-    /// illegal click (ignored) or when it isn't the human's turn.
-    pub fn play_human(&mut self, sq: Square) -> bool {
+    /// Attempt the human's move at `sq`, then let the AI reply. Returns the
+    /// sequence of board transitions (human move, then AI move) for the animator
+    /// to play, or an empty vec for an illegal click / not-the-human's-turn.
+    ///
+    /// Passes change the turn but move no discs, so they produce no transition.
+    pub fn play_human(&mut self, sq: Square) -> Vec<Transition> {
+        let mut transitions = Vec::new();
         if !self.awaiting_human() {
-            return false;
+            return transitions;
         }
-        match self.board.apply(sq) {
-            Some(next) => {
-                self.board = next;
-                self.run_until_human();
-                true
-            }
-            None => false,
-        }
+        let before = self.board.clone();
+        let after = match self.board.apply(sq) {
+            Some(board) => board,
+            None => return transitions,
+        };
+        transitions.push(Transition {
+            before,
+            after: after.clone(),
+        });
+        self.board = after;
+
+        self.run_until_human(&mut transitions);
+        transitions
     }
 
     /// Let the AI move (and auto-pass either side when it has no move) until it
-    /// is the human's turn again or the game is over.
-    fn run_until_human(&mut self) {
+    /// is the human's turn again or the game is over, recording each disc-moving
+    /// transition.
+    fn run_until_human(&mut self, transitions: &mut Vec<Transition>) {
         loop {
             if self.board.is_terminal() {
                 break;
@@ -144,7 +160,13 @@ impl Game {
             }
             match search(&self.board, self.difficulty.depth(), &self.evaluator).best_move {
                 Some(mv) => {
-                    self.board = self.board.apply(mv).expect("engine move is legal");
+                    let before = self.board.clone();
+                    let after = self.board.apply(mv).expect("engine move is legal");
+                    transitions.push(Transition {
+                        before,
+                        after: after.clone(),
+                    });
+                    self.board = after;
                 }
                 None => self.board = self.board.pass(),
             }

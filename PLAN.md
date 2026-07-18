@@ -82,7 +82,19 @@ UI is drawn with quads. A real in-scene glyph renderer stays on the backlog.
 - ✅ Verify: `just check && just test && just frame` (both PNG scenes reviewed — controls + game-over).
   `just run` is the interactive test.
 
-## Backlog / future (post-Stage 5) 🔮
+### Stage 6 — visual polish ✅
+- ✅ **Shader polish**: quad shader now handles shapes (plain rect / rounded rect / disc) via `shape` +
+  `param`. Discs get a **specular highlight + rim shadow** (glossy); cells/buttons get **rounded corners**.
+- ✅ **Board polish**: rounded board frame (tray look), rounded cells, Othello **star points** at the
+  2nd/6th grid-line intersections, and soft **drop shadows** under discs.
+- ✅ **Disc-flip animation**: `app::anim::Animator` plays a queue of move transitions; each move's flipped
+  discs animate edge-on (x-squash + color swap at the midpoint) and the placed disc pops in (ease-out-back).
+  Human move then AI move animate in sequence. Drives a per-frame redraw loop while active, back to
+  redraw-on-event when idle. Board input is ignored mid-animation.
+- ✅ Verify: `just check && just test && just frame` — reviewed static polish, game-over overlay, and a
+  mid-flip frame (edge-on squash confirmed). `just run` is the live animation test.
+
+## Backlog / future (post-Stage 6) 🔮
 - 🔮 **Search: move ordering** in alpha-beta (try corners / high-mobility / previous-best moves first, or
   order by a shallow pass). Better ordering ⇒ far more pruning ⇒ effectively deeper search at the same cost.
 - 🔮 **Search: exact endgame solver** — once ≤ ~14–16 empties remain, search to the end on exact disc
@@ -120,3 +132,6 @@ Record notable plan/scope changes here so the "why" survives.
 - 2026-07-18 — Stage 5 complete: game-over overlay + difficulty selector. No glyph renderer yet, so text
   lives in the window title; interactive UI is quads. `board_view::scene` now composes board+controls+
   overlay for both the window and `just frame`. `Difficulty` (Easy/Medium/Hard/Expert → depth 2/4/6/8).
+- 2026-07-18 — Stage 6 complete: visual polish. Shader generalized to shapes (rounded rects, glossy
+  discs with highlight+rim); board gains a tray frame, star points, disc shadows. Disc-flip animation via
+  an app-side `Animator` that turns the event-driven UI into a per-frame loop while a move plays.

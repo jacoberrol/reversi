@@ -8,11 +8,13 @@
 //! - **config**: format + size the surface is currently configured for.
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use game_core::{Outcome, Player};
 use render::{board_view, Renderer};
 use winit::window::Window;
 
+use crate::anim::Animator;
 use crate::game::{Difficulty, Game};
 use crate::input::{Phase, PointerInput};
 
@@ -24,6 +26,7 @@ pub struct WindowState {
     config: wgpu::SurfaceConfiguration,
     renderer: Renderer,
     game: Game,
+    animator: Animator,
     /// Last known cursor position (physical pixels); winit's click event doesn't
     /// carry a position, so we track it from cursor-moved events.
     cursor: [f32; 2],
@@ -91,6 +94,7 @@ impl WindowState {
             config,
             renderer,
             game: Game::new(),
+            animator: Animator::default(),
             cursor: [0.0, 0.0],
         };
         state.update_title();
@@ -120,6 +124,7 @@ impl WindowState {
 
     /// Start a new game.
     pub fn restart(&mut self) {
+        self.animator.clear();
         self.game.restart();
         self.update_title();
     }
@@ -149,19 +154,26 @@ impl WindowState {
             return self.set_difficulty_index(index);
         }
 
+        // Ignore board input while a move is still animating.
+        if self.animator.is_active() {
+            return false;
+        }
+
         if self.game.is_over() {
             self.restart();
             return true;
         }
 
-        let changed = match board_view::square_at(&layout, input.x, input.y) {
-            Some(sq) => self.game.play_human(sq),
-            None => false,
+        let Some(sq) = board_view::square_at(&layout, input.x, input.y) else {
+            return false;
         };
-        if changed {
-            self.update_title();
+        let transitions = self.game.play_human(sq);
+        if transitions.is_empty() {
+            return false;
         }
-        changed
+        self.animator.push(transitions);
+        self.update_title();
+        true
     }
 
     /// Reflect the current state in the window title (our stand-in for on-screen
@@ -205,12 +217,20 @@ impl WindowState {
 
         let size = [self.config.width as f32, self.config.height as f32];
         let layout = board_view::layout(size[0], size[1]);
-        let scene = board_view::View {
-            show_hints: self.game.awaiting_human(),
-            selected_difficulty: self.game.difficulty().index(),
-            outcome: self.game.outcome(),
+
+        // If an animation is playing, draw its intermediate board with the live
+        // disc animations; otherwise draw the current game state.
+        let (board, anims) = match self.animator.frame(Instant::now()) {
+            Some((board, anims)) => (board, anims),
+            None => (self.game.board().clone(), Vec::new()),
         };
-        let instances = board_view::scene(self.game.board(), &layout, &scene);
+        let animating = !anims.is_empty();
+        let scene = board_view::View {
+            show_hints: !animating && self.game.awaiting_human(),
+            selected_difficulty: self.game.difficulty().index(),
+            outcome: if animating { None } else { self.game.outcome() },
+        };
+        let instances = board_view::scene(&board, &layout, &scene, &anims);
         self.renderer.prepare(&self.queue, size, &instances);
 
         let mut encoder = self
@@ -235,5 +255,11 @@ impl WindowState {
         }
         self.queue.submit(std::iter::once(encoder.finish()));
         frame.present();
+
+        // Keep the frames coming while an animation is in flight; when it ends,
+        // `is_active` goes false and we fall back to redraw-on-event.
+        if self.animator.is_active() {
+            self.request_redraw();
+        }
     }
 }
