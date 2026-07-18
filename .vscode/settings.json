@@ -1,0 +1,8 @@
+{
+  // Give rust-analyzer its own build directory so its continuous background
+  // checks don't share `target/` with CLI cargo (`just check`, `just test`,
+  // `cargo run`). Sharing lets the two race and corrupt incremental-build
+  // fingerprints, which shows up as phantom "unresolved import" errors even
+  // though the code compiles fine. This isolates them into target/rust-analyzer.
+  "rust-analyzer.cargo.targetDir": true
+}
