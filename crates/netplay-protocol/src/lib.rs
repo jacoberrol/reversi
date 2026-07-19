@@ -68,7 +68,12 @@ pub const DEV_KEY_ID: u16 = 1;
 pub const DEV_TOKEN: &str = "reversi-dev-token";
 
 /// A message from a client to the server.
+///
+/// Internally tagged: each message serializes as a flat JSON object with a
+/// `"type"` discriminator (e.g. `{"type":"Invite","to":3}`), so non-Rust
+/// clients can model it as a conventional tagged union.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type")]
 pub enum ClientMsg {
     /// First message on connect: the player's display name, protocol version,
     /// and an **opaque authorization credential** the server's authenticator
@@ -85,11 +90,14 @@ pub enum ClientMsg {
     /// Decline an invite from `inviter`.
     Decline { inviter: PlayerId },
     /// An opaque in-game payload, to be relayed to the opponent verbatim.
-    Game(Vec<u8>),
+    Game { payload: Vec<u8> },
 }
 
 /// A message from the server to a client.
+///
+/// Internally tagged with a `"type"` discriminator, like [`ClientMsg`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type")]
 pub enum ServerMsg {
     /// The other players currently available in the lobby.
     Presence { players: Vec<PlayerInfo> },
@@ -100,11 +108,11 @@ pub enum ServerMsg {
     /// Paired with an opponent; you take `seat` (seat 0 moves first).
     Matched { seat: Seat, opponent: String },
     /// An opaque in-game payload from the opponent.
-    Game(Vec<u8>),
+    Game { payload: Vec<u8> },
     /// The opponent disconnected or resigned.
     OpponentLeft,
     /// A protocol-level error (e.g. version mismatch); the connection closes.
-    Error(String),
+    Error { message: String },
 }
 
 /// Serialize a message to bytes (the body of one WebSocket message).
@@ -140,7 +148,26 @@ mod tests {
         round_trip_client(ClientMsg::Invite { to: 7 });
         round_trip_client(ClientMsg::Accept { inviter: 7 });
         round_trip_client(ClientMsg::Decline { inviter: 7 });
-        round_trip_client(ClientMsg::Game(vec![1, 2, 3]));
+        round_trip_client(ClientMsg::Game {
+            payload: vec![1, 2, 3],
+        });
+    }
+
+    #[test]
+    fn messages_are_flat_type_tagged_json() {
+        // The published wire shape: a `"type"` discriminator alongside the
+        // fields. Non-Rust clients depend on this, so pin it.
+        let json = String::from_utf8(to_bytes(&ClientMsg::Invite { to: 7 })).unwrap();
+        assert_eq!(json, r#"{"type":"Invite","to":7}"#);
+
+        let json = String::from_utf8(to_bytes(&ServerMsg::Error {
+            message: "nope".into(),
+        }))
+        .unwrap();
+        assert_eq!(json, r#"{"type":"Error","message":"nope"}"#);
+
+        let json = String::from_utf8(to_bytes(&ServerMsg::OpponentLeft)).unwrap();
+        assert_eq!(json, r#"{"type":"OpponentLeft"}"#);
     }
 
     #[test]
@@ -167,9 +194,13 @@ mod tests {
                 seat: Seat(0),
                 opponent: "Bob".into(),
             },
-            ServerMsg::Game(vec![9, 8, 7]),
+            ServerMsg::Game {
+                payload: vec![9, 8, 7],
+            },
             ServerMsg::OpponentLeft,
-            ServerMsg::Error("bad version".into()),
+            ServerMsg::Error {
+                message: "bad version".into(),
+            },
         ] {
             let decoded: ServerMsg = decode(&to_bytes(&msg)).unwrap();
             assert_eq!(decoded, msg);

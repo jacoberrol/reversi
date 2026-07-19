@@ -102,7 +102,7 @@ impl NetHandle {
     /// Send an opaque in-game payload to the opponent (best effort; a broken
     /// connection surfaces as [`NetEvent::Disconnected`]).
     pub fn game(&mut self, payload: Vec<u8>) {
-        let _ = self.tx.send(ClientMsg::Game(payload));
+        let _ = self.tx.send(ClientMsg::Game { payload });
     }
 
     pub fn invite(&mut self, to: PlayerId) {
@@ -235,9 +235,9 @@ fn server_msg_to_event(msg: ServerMsg) -> NetEvent {
         ServerMsg::Invited { from, name } => NetEvent::Invited { from, name },
         ServerMsg::InviteDeclined { by } => NetEvent::InviteDeclined { by },
         ServerMsg::Matched { seat, opponent } => NetEvent::Matched { seat, opponent },
-        ServerMsg::Game(payload) => NetEvent::Game(payload),
+        ServerMsg::Game { payload } => NetEvent::Game(payload),
         ServerMsg::OpponentLeft => NetEvent::OpponentLeft,
-        ServerMsg::Error(message) => NetEvent::Error(message),
+        ServerMsg::Error { message } => NetEvent::Error(message),
     }
 }
 

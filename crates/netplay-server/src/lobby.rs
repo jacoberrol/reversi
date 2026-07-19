@@ -73,7 +73,9 @@ impl Lobby {
             } => {
                 if self.players.len() >= MAX_LOBBY_PLAYERS {
                     let _ = outbox
-                        .send(ServerMsg::Error("lobby full".to_string()))
+                        .send(ServerMsg::Error {
+                            message: "lobby full".to_string(),
+                        })
                         .await;
                     let _ = reply.send(None);
                     eprintln!("rate-limit: lobby full, rejected {name}");
@@ -116,7 +118,7 @@ impl Lobby {
 
             LobbyCmd::Relay { from, payload } => {
                 if let Some(partner) = self.players.get(&from).and_then(|p| p.partner) {
-                    self.send(partner, ServerMsg::Game(payload)).await;
+                    self.send(partner, ServerMsg::Game { payload }).await;
                 }
             }
 

@@ -10,8 +10,10 @@ use serde::{Deserialize, Serialize};
 
 /// A Reversi in-game action. Rides inside the netplay `Game` payload.
 ///
-/// Passes are never sent: both clients derive forced passes locally.
+/// Passes are never sent: both clients derive forced passes locally. Internally
+/// tagged (`{"type":"Move","square":19}`) to match the netplay envelope's shape.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type")]
 pub enum GameMsg {
     /// Place a disc on the square with this flat index (`0..64`).
     Move { square: u8 },

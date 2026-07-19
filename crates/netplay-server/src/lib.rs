@@ -107,7 +107,9 @@ async fn handle(
         }) if protocol == PROTOCOL_VERSION => (name, credential),
         Some(ClientMsg::Hello { .. }) => {
             let _ = outbox
-                .send(ServerMsg::Error("protocol version mismatch".to_string()))
+                .send(ServerMsg::Error {
+                    message: "protocol version mismatch".to_string(),
+                })
                 .await;
             return Ok(());
         }
@@ -118,7 +120,11 @@ async fn handle(
     match auth.verify(&credential) {
         Ok(identity) => println!("authorized (key {})", identity.key_id),
         Err(e) => {
-            let _ = outbox.send(ServerMsg::Error(e.message().to_string())).await;
+            let _ = outbox
+                .send(ServerMsg::Error {
+                    message: e.message().to_string(),
+                })
+                .await;
             return Ok(());
         }
     }
@@ -145,7 +151,9 @@ async fn handle(
     while let Some(msg) = next_client(&mut source).await {
         if !inbound.try_take() {
             let _ = outbox
-                .send(ServerMsg::Error("rate exceeded".to_string()))
+                .send(ServerMsg::Error {
+                    message: "rate exceeded".to_string(),
+                })
                 .await;
             eprintln!("rate-limit: message rate exceeded (player {id})");
             break;
@@ -160,7 +168,7 @@ async fn handle(
                 decliner: id,
                 inviter,
             },
-            ClientMsg::Game(payload) => LobbyCmd::Relay { from: id, payload },
+            ClientMsg::Game { payload } => LobbyCmd::Relay { from: id, payload },
             ClientMsg::Hello { .. } => continue, // ignore a stray second Hello
         };
         if lobby_tx.send(cmd).await.is_err() {
