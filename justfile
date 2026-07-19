@@ -10,6 +10,15 @@ default:
 test:
     cargo test --workspace
 
+# Remove all build artifacts (the whole target/, including rust-analyzer's dir).
+clean:
+    cargo clean
+
+# From-scratch build of the whole workspace (all crates, all targets). Also
+# clears stale rust-analyzer state — restart the RA server afterward.
+rebuild: clean
+    cargo build --workspace --all-targets
+
 # Launch the game vs the AI (debug build).
 run:
     cargo run -p app
