@@ -58,6 +58,23 @@ rotate-token KEY_ID="2":
     echo "rotated: new token in Keychain + GitHub secret NETPLAY_TOKENS"
     echo "next: 'just deploy' to apply it on the relay (the old token works until then)"
 
+# Prompts twice for the password (not echoed) and stores NETPLAY_ADMIN=
+# "name:password" in GitHub Secrets. The server seeds/rotates the admin on the
+# next `just deploy`. NAME can't contain a colon.
+# Set the relay's admin account (name + password) in GitHub Secrets.
+set-admin NAME:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v gh >/dev/null || { echo "gh CLI not found (brew install gh)"; exit 1; }
+    case "{{NAME}}" in *:*) echo "admin name cannot contain ':'"; exit 1;; esac
+    read -r -s -p "password for admin '{{NAME}}': " p1; echo
+    read -r -s -p "confirm password: " p2; echo
+    [ -n "$p1" ] || { echo "empty password; aborting"; exit 1; }
+    [ "$p1" = "$p2" ] || { echo "passwords differ; aborting"; exit 1; }
+    printf '%s:%s' "{{NAME}}" "$p1" | gh secret set NETPLAY_ADMIN
+    echo "set NETPLAY_ADMIN for admin '{{NAME}}'"
+    echo "next: 'just deploy' to seed/rotate the admin on the relay"
+
 # The token comes from an already-set NETPLAY_TOKEN, else the Keychain (see
 # `just set-token`), else the dev default (which the deployed relay rejects).
 # Play against the public relay (baked-in wss:// URL) — no local server needed.

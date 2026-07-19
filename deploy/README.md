@@ -49,7 +49,7 @@ user on the VM (add it in the exe.dev key UI, or append to
 | Secret | Value |
 |---|---|
 | `DEPLOY_SSH_KEY` | the **private** key: `gh secret set DEPLOY_SSH_KEY < ~/.ssh/netplay-ci-deploy` |
-| `NETPLAY_ADMIN` | the admin account, `"name:password"`: `gh secret set NETPLAY_ADMIN` |
+| `NETPLAY_ADMIN` | the admin account: `just set-admin <name>` (prompts for the password) |
 
 The server seeds/rotates the admin account from `NETPLAY_ADMIN` on every boot
 (idempotent argon2id upsert), so changing the secret + `just deploy` rotates the
