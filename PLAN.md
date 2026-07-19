@@ -308,3 +308,7 @@ Record notable plan/scope changes here so the "why" survives.
   value** (wire: `"credential":{"key_id":2,"token":"…"}` instead of a byte array). `Authenticator`/
   `AuthProvider` now pass `serde_json::Value`; the relay still never inspects it. Pre-deploy ergonomics
   for non-Rust clients.
+- 2026-07-18 — Stage 9: added `GET /asyncapi.json` — the message protocol as a standard **AsyncAPI
+  3.0** document (reuses the schemars schemas, subschemas inlined). `just asyncapi` fetches it.
+  Also marked the slow eval strength test `#[ignore]` (run with `--ignored` / `just matchup`) so the
+  default `cargo test`/CI run is faster.

@@ -8,7 +8,12 @@ use eval::matchup::play_match;
 
 const MATCH_SEED: u64 = 0xA1B2_C3D4_E5F6_0718;
 
+// Slow (~17s: a 50-game depth-3-vs-depth-1 match), so it's excluded from the
+// default `cargo test`/CI run. Run it on demand with:
+//   cargo test -p eval --test strength -- --ignored
+// or exercise the same path via `just matchup`.
 #[test]
+#[ignore = "slow strength match; run with --ignored or `just matchup`"]
 fn deeper_search_beats_shallower() {
     let result = play_match(3, 1, 50, MATCH_SEED);
     println!(

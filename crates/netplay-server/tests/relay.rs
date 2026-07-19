@@ -240,15 +240,7 @@ async fn admin_subscription_streams_live_events() {
 async fn schema_endpoint_serves_the_descriptor() {
     let addr = start_server().await;
     // A plain HTTP GET (no WebSocket upgrade) on the same endpoint.
-    let mut stream = TcpStream::connect(addr).await.unwrap();
-    stream
-        .write_all(b"GET /schema HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
-        .await
-        .unwrap();
-    let mut raw = Vec::new();
-    stream.read_to_end(&mut raw).await.unwrap();
-    let response = String::from_utf8_lossy(&raw);
-
+    let response = http_get(addr, "/schema").await;
     assert!(
         response.contains("200 OK"),
         "expected 200, got:\n{response}"
@@ -258,4 +250,28 @@ async fn schema_endpoint_serves_the_descriptor() {
     assert!(response.contains("protocolVersion"));
     assert!(response.contains("ClientMsg"));
     assert!(response.contains("ServerMsg"));
+}
+
+#[tokio::test]
+async fn asyncapi_endpoint_serves_the_document() {
+    let addr = start_server().await;
+    let response = http_get(addr, "/asyncapi.json").await;
+    assert!(
+        response.contains("200 OK"),
+        "expected 200, got:\n{response}"
+    );
+    assert!(response.contains("application/json"));
+    assert!(response.contains(r#""asyncapi":"3.0.0""#));
+    assert!(response.contains("ClientMsg"));
+    assert!(response.contains("ServerMsg"));
+}
+
+/// Issue a plain HTTP/1.1 GET on the relay port and return the full raw response.
+async fn http_get(addr: SocketAddr, path: &str) -> String {
+    let mut stream = TcpStream::connect(addr).await.unwrap();
+    let request = format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    stream.write_all(request.as_bytes()).await.unwrap();
+    let mut raw = Vec::new();
+    stream.read_to_end(&mut raw).await.unwrap();
+    String::from_utf8_lossy(&raw).into_owned()
 }

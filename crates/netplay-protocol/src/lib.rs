@@ -199,6 +199,85 @@ pub fn service_descriptor() -> serde_json::Value {
     })
 }
 
+/// The self-contained JSON Schema of a message type, with subschemas inlined so
+/// there are no `#/definitions` refs to dangle once embedded in a larger doc.
+#[cfg(feature = "schema")]
+fn message_schema<T: schemars::JsonSchema>() -> serde_json::Value {
+    let settings = schemars::gen::SchemaSettings::draft07().with(|s| s.inline_subschemas = true);
+    let schema = schemars::gen::SchemaGenerator::new(settings).into_root_schema_for::<T>();
+    serde_json::to_value(schema).expect("schema serializes")
+}
+
+/// An [AsyncAPI 3.0](https://www.asyncapi.com/) document describing the relay's
+/// WebSocket message protocol — the standard, tooling-friendly spec for a
+/// message API (OpenAPI describes HTTP request/response, which this isn't).
+/// Reuses the generated JSON Schemas as the message payloads. Served at
+/// `/asyncapi.json`. Behind the `schema` feature.
+#[cfg(feature = "schema")]
+pub fn asyncapi_document() -> serde_json::Value {
+    serde_json::json!({
+        "asyncapi": "3.0.0",
+        "info": {
+            "title": "Reversi netplay relay",
+            "version": PROTOCOL_VERSION.to_string(),
+            "description": "Game-agnostic netplay relay. One WebSocket channel carries \
+                JSON messages, each internally tagged with a \"type\" field. The in-game \
+                action rides as opaque bytes in Game.payload.",
+        },
+        "defaultContentType": "application/json",
+        "servers": {
+            "public": {
+                "host": "relay.netplay.oliverj.network",
+                "protocol": "wss",
+                "description": "TLS-fronted public relay.",
+            },
+        },
+        "channels": {
+            "lobby": {
+                "address": "/",
+                "title": "Lobby / match channel",
+                "messages": {
+                    "ClientMsg": { "$ref": "#/components/messages/ClientMsg" },
+                    "ServerMsg": { "$ref": "#/components/messages/ServerMsg" },
+                },
+            },
+        },
+        // Actions are from the relay's perspective: it receives ClientMsg, sends ServerMsg.
+        "operations": {
+            "receiveClientMsg": {
+                "action": "receive",
+                "channel": { "$ref": "#/channels/lobby" },
+                "summary": "Messages a client sends to the relay.",
+                "messages": [ { "$ref": "#/channels/lobby/messages/ClientMsg" } ],
+            },
+            "sendServerMsg": {
+                "action": "send",
+                "channel": { "$ref": "#/channels/lobby" },
+                "summary": "Messages the relay sends to a client.",
+                "messages": [ { "$ref": "#/channels/lobby/messages/ServerMsg" } ],
+            },
+        },
+        "components": {
+            "messages": {
+                "ClientMsg": {
+                    "name": "ClientMsg",
+                    "title": "Client to server message",
+                    "contentType": "application/json",
+                    "schemaFormat": "application/schema+json;version=draft-07",
+                    "payload": message_schema::<ClientMsg>(),
+                },
+                "ServerMsg": {
+                    "name": "ServerMsg",
+                    "title": "Server to client message",
+                    "contentType": "application/json",
+                    "schemaFormat": "application/schema+json;version=draft-07",
+                    "payload": message_schema::<ServerMsg>(),
+                },
+            },
+        },
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

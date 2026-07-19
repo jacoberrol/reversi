@@ -61,6 +61,10 @@ deploy:
 schema URL="https://relay.netplay.oliverj.network":
     curl -fsS {{URL}}/schema | { jq . 2>/dev/null || cat; }
 
+# Fetch the relay's AsyncAPI 3.0 document (the standard WebSocket message spec).
+asyncapi URL="https://relay.netplay.oliverj.network":
+    curl -fsS {{URL}}/asyncapi.json | { jq . 2>/dev/null || cat; }
+
 # Stops the server automatically when both windows close (or on Ctrl-C). Uses
 # port 5099 to avoid clashing with a manual `just serve`. In one window click
 # Invite next to the other player; in the other, click Accept.
