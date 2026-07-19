@@ -38,6 +38,23 @@ pub struct PlayerInfo {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Seat(pub u8);
 
+/// An active match, for the admin/control surface: the two paired players by seat.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct MatchInfo {
+    pub seat0: PlayerInfo,
+    pub seat1: PlayerInfo,
+}
+
+/// A snapshot of relay counters, for the admin/control surface.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct ServerStats {
+    pub players_online: u32,
+    pub matches_active: u32,
+    pub uptime_seconds: u64,
+}
+
 /// The reference authorization scheme's credential: a versioned shared token.
 /// `key_id` selects which key the server checks against, so keys can rotate
 /// (old + new coexist during rollout). This is the credential *format* both the
@@ -95,6 +112,16 @@ pub enum ClientMsg {
     Decline { inviter: PlayerId },
     /// An opaque in-game payload, to be relayed to the opponent verbatim.
     Game { payload: Vec<u8> },
+
+    // Admin/control requests. During development any authorized connection may
+    // send these; before non-dev use they must be gated by an admin role (see
+    // DESIGN §9 and the RBAC backlog item). Each has a matching reply below.
+    /// List every connected player.
+    ListPlayers,
+    /// List every active match.
+    ListMatches,
+    /// Fetch a snapshot of relay counters.
+    GetStats,
 }
 
 /// A message from the server to a client.
@@ -118,6 +145,14 @@ pub enum ServerMsg {
     OpponentLeft,
     /// A protocol-level error (e.g. version mismatch); the connection closes.
     Error { message: String },
+
+    // Admin/control replies (see the matching `ClientMsg` requests).
+    /// Every connected player (reply to `ListPlayers`).
+    Players { players: Vec<PlayerInfo> },
+    /// Every active match (reply to `ListMatches`).
+    Matches { matches: Vec<MatchInfo> },
+    /// A relay counter snapshot (reply to `GetStats`).
+    Stats { stats: ServerStats },
 }
 
 /// Serialize a message to bytes (the body of one WebSocket message).
@@ -176,6 +211,9 @@ mod tests {
         round_trip_client(ClientMsg::Game {
             payload: vec![1, 2, 3],
         });
+        round_trip_client(ClientMsg::ListPlayers);
+        round_trip_client(ClientMsg::ListMatches);
+        round_trip_client(ClientMsg::GetStats);
     }
 
     #[test]
@@ -225,6 +263,31 @@ mod tests {
             ServerMsg::OpponentLeft,
             ServerMsg::Error {
                 message: "bad version".into(),
+            },
+            ServerMsg::Players {
+                players: vec![PlayerInfo {
+                    id: 5,
+                    name: "Dave".into(),
+                }],
+            },
+            ServerMsg::Matches {
+                matches: vec![MatchInfo {
+                    seat0: PlayerInfo {
+                        id: 1,
+                        name: "Bob".into(),
+                    },
+                    seat1: PlayerInfo {
+                        id: 2,
+                        name: "Carol".into(),
+                    },
+                }],
+            },
+            ServerMsg::Stats {
+                stats: ServerStats {
+                    players_online: 3,
+                    matches_active: 1,
+                    uptime_seconds: 42,
+                },
             },
         ] {
             let decoded: ServerMsg = decode(&to_bytes(&msg)).unwrap();

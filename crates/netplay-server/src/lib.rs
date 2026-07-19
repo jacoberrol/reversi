@@ -211,26 +211,88 @@ async fn relay(
             eprintln!("rate-limit: message rate exceeded (player {id})");
             break;
         }
-        let cmd = match msg {
-            ClientMsg::Invite { to } => LobbyCmd::Invite { from: id, to },
-            ClientMsg::Accept { inviter } => LobbyCmd::Accept {
-                accepter: id,
-                inviter,
-            },
-            ClientMsg::Decline { inviter } => LobbyCmd::Decline {
-                decliner: id,
-                inviter,
-            },
-            ClientMsg::Game { payload } => LobbyCmd::Relay { from: id, payload },
+        // Play commands are fire-and-forget; admin queries need a reply routed
+        // back to this client. A closed lobby or client channel ends the loop.
+        match msg {
+            ClientMsg::Invite { to } => {
+                if lobby_tx
+                    .send(LobbyCmd::Invite { from: id, to })
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+            ClientMsg::Accept { inviter } => {
+                let cmd = LobbyCmd::Accept {
+                    accepter: id,
+                    inviter,
+                };
+                if lobby_tx.send(cmd).await.is_err() {
+                    break;
+                }
+            }
+            ClientMsg::Decline { inviter } => {
+                let cmd = LobbyCmd::Decline {
+                    decliner: id,
+                    inviter,
+                };
+                if lobby_tx.send(cmd).await.is_err() {
+                    break;
+                }
+            }
+            ClientMsg::Game { payload } => {
+                if lobby_tx
+                    .send(LobbyCmd::Relay { from: id, payload })
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+            ClientMsg::ListPlayers => {
+                let Some(players) = query(&lobby_tx, |reply| LobbyCmd::ListPlayers { reply }).await
+                else {
+                    break;
+                };
+                if outbox.send(ServerMsg::Players { players }).await.is_err() {
+                    break;
+                }
+            }
+            ClientMsg::ListMatches => {
+                let Some(matches) = query(&lobby_tx, |reply| LobbyCmd::ListMatches { reply }).await
+                else {
+                    break;
+                };
+                if outbox.send(ServerMsg::Matches { matches }).await.is_err() {
+                    break;
+                }
+            }
+            ClientMsg::GetStats => {
+                let Some(stats) = query(&lobby_tx, |reply| LobbyCmd::Stats { reply }).await else {
+                    break;
+                };
+                if outbox.send(ServerMsg::Stats { stats }).await.is_err() {
+                    break;
+                }
+            }
             ClientMsg::Hello { .. } => continue, // ignore a stray second Hello
-        };
-        if lobby_tx.send(cmd).await.is_err() {
-            break;
         }
     }
 
     let _ = lobby_tx.send(LobbyCmd::Leave { id }).await;
     Ok(())
+}
+
+/// Send the lobby a query built with `make` and await its oneshot reply.
+/// `None` if the lobby channel closed or the reply was dropped.
+async fn query<T>(
+    lobby_tx: &mpsc::Sender<LobbyCmd>,
+    make: impl FnOnce(oneshot::Sender<T>) -> LobbyCmd,
+) -> Option<T> {
+    let (reply_tx, reply_rx) = oneshot::channel();
+    lobby_tx.send(make(reply_tx)).await.ok()?;
+    reply_rx.await.ok()
 }
 
 /// Drain outgoing messages to the socket as WebSocket binary messages.
