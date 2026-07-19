@@ -56,6 +56,11 @@ online NAME="Player":
 deploy:
     gh workflow run "Deploy relay"
 
+# Fetch the relay's self-describing wire contract (JSON Schema + metadata).
+# Pretty-prints with jq if present. URL defaults to the public relay.
+schema URL="https://relay.netplay.oliverj.network":
+    curl -fsS {{URL}}/schema | { jq . 2>/dev/null || cat; }
+
 # Stops the server automatically when both windows close (or on Ctrl-C). Uses
 # port 5099 to avoid clashing with a manual `just serve`. In one window click
 # Invite next to the other player; in the other, click Accept.

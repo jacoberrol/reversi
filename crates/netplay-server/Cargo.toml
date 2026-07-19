@@ -8,13 +8,25 @@ license.workspace = true
 # messages opaquely. Uses tokio; depends on `netplay-protocol` only — no game
 # logic, so any 2-player turn-based game can use it as-is.
 [dependencies]
-netplay-protocol.workspace = true
+# `schema` pulls in schemars for the self-describing `/schema` endpoint.
+netplay-protocol = { workspace = true, features = ["schema"] }
 tokio.workspace = true
-# Plain WebSocket (no TLS — the deploy proxy terminates TLS and forwards ws://).
-tokio-tungstenite = { version = "0.24", default-features = false, features = ["handshake"] }
+# A minimal HTTP/1 front (hyper) serves `GET /schema` and upgrades `/` to a
+# plain WebSocket (hyper-tungstenite). No TLS — the deploy proxy terminates it
+# and forwards ws://. We use hyper-tungstenite's re-exported tungstenite types
+# so the WebSocket version always matches the upgrade machinery.
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+hyper-tungstenite = "0.30"
+http-body-util = "0.1"
+bytes = "1"
+# Names the post-upgrade WebSocketStream / Message types (version matched to
+# hyper-tungstenite). We don't do the handshake ourselves — hyper does.
+tokio-tungstenite = { version = "0.30", default-features = false }
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 
 [dev-dependencies]
-# The relay test drives the server over WebSocket.
-tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "handshake"] }
+# The relay test drives the server over WebSocket (same version as the runtime
+# dep, so the test build has a single `tokio_tungstenite`).
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "handshake"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }

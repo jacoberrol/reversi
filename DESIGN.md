@@ -123,7 +123,13 @@ Rust server on a cloud VM. We build the real topology now and stage toward that.
   two odd variants (`Game`, `Error`) from newtype into struct variants (`Game { payload }`,
   `Error { message }`), since internal tagging can't wrap a bare array/string. We kept JSON
   (not protobuf): it's human-readable in logs and we own both ends, and a self-describing
-  `/schema` endpoint (planned) recovers the cross-language rigor without a binary codec.
+  `/schema` endpoint recovers the cross-language rigor without a binary codec.
+- **Self-describing `/schema` endpoint.** The server runs a minimal `hyper` HTTP/1 front on the
+  same port: `GET /schema` returns a service descriptor (metadata + JSON Schema of every wire
+  message, generated from the Rust types via `schemars` so it can't drift), while `/` upgrades to
+  WebSocket (`hyper-tungstenite`) and hands off to the relay. So a non-Rust client (a Go admin TUI)
+  can discover the contract by fetching one URL. `schemars` is behind a `schema` feature the client
+  never enables. The proxy already forwards plain HTTP to the VM, so `/schema` needs no proxy change.
 - **The winit loop stays synchronous; networking uses a runtime off to the side.** The relay
   (`netplay-server`) uses tokio (per-connection tasks + an in-memory lobby actor). The client
   runs its WebSocket on a **single-thread tokio runtime confined to a dedicated network thread**,

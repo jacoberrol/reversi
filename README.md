@@ -45,6 +45,7 @@ Other recipes (`atlas` is stubbed until the deferred sprite pipeline — see [PL
 | `just online [NAME]` | Play online against the public relay (baked-in `wss://` URL). |
 | `just play [URL] [NAME]` | Play against a specific relay (e.g. a local `ws://` server). |
 | `just deploy` | Trigger the relay deploy to the exe.dev VM (manual CI workflow; see [deploy/README.md](deploy/README.md)). |
+| `just schema [URL]` | Fetch the relay's self-describing wire contract (JSON Schema) from `URL/schema`. |
 | `just selfplay N` | Headless: play N random self-play games. |
 | `just matchup [DEEP] [SHALLOW] [GAMES]` | Play a depth-vs-depth AI match and print the score. |
 | `just frame` | Render one board frame to `target/frame.png` for visual inspection. |

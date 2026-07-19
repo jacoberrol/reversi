@@ -10,6 +10,7 @@ use netplay_protocol::{
     ClientMsg, Seat, ServerMsg, SharedTokenCredential, DEV_KEY_ID, DEV_TOKEN, PROTOCOL_VERSION,
 };
 use netplay_server::auth::SharedTokenAuth;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
@@ -133,4 +134,28 @@ async fn rejects_a_bad_credential() {
     let addr = start_server().await;
     let mut ws = connect_ws(addr, "Mallory", b"garbage".to_vec()).await;
     assert!(matches!(recv(&mut ws).await, ServerMsg::Error { .. }));
+}
+
+#[tokio::test]
+async fn schema_endpoint_serves_the_descriptor() {
+    let addr = start_server().await;
+    // A plain HTTP GET (no WebSocket upgrade) on the same endpoint.
+    let mut stream = TcpStream::connect(addr).await.unwrap();
+    stream
+        .write_all(b"GET /schema HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .await
+        .unwrap();
+    let mut raw = Vec::new();
+    stream.read_to_end(&mut raw).await.unwrap();
+    let response = String::from_utf8_lossy(&raw);
+
+    assert!(
+        response.contains("200 OK"),
+        "expected 200, got:\n{response}"
+    );
+    assert!(response.contains("application/json"));
+    // The descriptor carries metadata and the message schemas.
+    assert!(response.contains("protocolVersion"));
+    assert!(response.contains("ClientMsg"));
+    assert!(response.contains("ServerMsg"));
 }
