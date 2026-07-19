@@ -158,6 +158,11 @@ async fn io_loop(
     proxy: EventLoopProxy<NetEvent>,
     mut outgoing: UnboundedReceiver<ClientMsg>,
 ) {
+    // rustls 0.23 needs a process-wide crypto provider chosen explicitly; ours
+    // is `ring`. Installing is idempotent (Err if already set — harmless), and
+    // must happen before tokio-tungstenite builds the wss:// ClientConfig.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     let ws = match tokio_tungstenite::connect_async(url.as_str()).await {
         Ok((ws, _response)) => ws,
         Err(e) => {
@@ -259,5 +264,17 @@ mod tests {
     fn from_spec_rejects_malformed() {
         assert!(SharedToken::from_spec("no-colon").is_none());
         assert!(SharedToken::from_spec("notanumber:tok").is_none());
+    }
+
+    #[test]
+    fn crypto_provider_lets_a_tls_config_build() {
+        // Reproduces the wss:// handshake path that panicked when no crypto
+        // provider was installed. Building a ClientConfig resolves the process
+        // default provider — this must not panic.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let roots = rustls::RootCertStore::empty();
+        let _config = rustls::ClientConfig::builder()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
     }
 }
