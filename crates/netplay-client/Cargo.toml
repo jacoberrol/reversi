@@ -4,9 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-# Reusable client transport for the netplay layer: a blocking TCP connection on
-# a background thread that feeds decoded events into a winit event loop. The game
-# supplies and interprets the opaque game payload; this crate has no game logic.
+# Reusable client transport for the netplay layer: a WebSocket connection on a
+# tokio runtime confined to a background thread that feeds decoded events into a
+# winit event loop. The game supplies and interprets the opaque game payload;
+# this crate has no game logic.
 [dependencies]
 netplay-protocol.workspace = true
 winit.workspace = true
@@ -15,3 +16,7 @@ winit.workspace = true
 tokio = { workspace = true, features = ["rt", "macros"] }
 tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
+# rustls 0.23 requires a crypto provider be selected explicitly. We enable the
+# `ring` provider here and install it as the process default (see lib.rs) so the
+# wss:// handshake doesn't panic looking for one.
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
