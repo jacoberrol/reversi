@@ -98,8 +98,8 @@ pub fn ui(ctx: &egui::Context, form: &mut LoginForm, actions: &mut Vec<LoginActi
                     ui.vertical_centered(|ui| {
                         ui.add_enabled_ui(!form.connecting, |ui| {
                             let label = if register { "Create Account" } else { "Log in" };
-                            let button = ui
-                                .add(egui::Button::new(label).min_size(egui::vec2(180.0, 38.0)));
+                            let button =
+                                ui.add(egui::Button::new(label).min_size(egui::vec2(180.0, 38.0)));
                             if button.clicked() || (enter && !form.connecting) {
                                 actions.push(LoginAction::Submit { register });
                             }
@@ -110,7 +110,11 @@ pub fn ui(ctx: &egui::Context, form: &mut LoginForm, actions: &mut Vec<LoginActi
                                 "create a new account"
                             };
                             if ui.link(RichText::new(link).color(ACCENT)).clicked() {
-                                form.mode = if register { Mode::Login } else { Mode::Register };
+                                form.mode = if register {
+                                    Mode::Login
+                                } else {
+                                    Mode::Register
+                                };
                                 form.error = None;
                             }
                         });
