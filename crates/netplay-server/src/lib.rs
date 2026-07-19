@@ -11,6 +11,7 @@ pub mod admin;
 pub mod auth;
 pub mod limits;
 pub mod lobby;
+pub mod openapi;
 pub mod store;
 
 use std::convert::Infallible;

@@ -253,7 +253,9 @@ the game WebSocket, which now carries *only* gameplay. Supersedes Stage 9's WS a
   password.
 - 🔮 **Increment 2 — SSE `/admin/events`.** Re-add lobby event broadcast, streamed to bearer-guarded
   SSE subscribers (replaces the old WS `SubscribeEvents`).
-- 🔮 **Increment 3 — `GET /admin/openapi.json`.** OpenAPI document describing the admin REST API.
+- ✅ **Increment 3 — `GET /admin/openapi.json`.** Hand-written OpenAPI 3.0 document (`openapi.rs`)
+  describing the admin REST API, served unauthenticated so a client can discover how to authenticate.
+  `just openapi` fetches it.
 
 **Deferred:** separate repo / published crate (until a second consumer exists); N-player /
 spectating / reconnect; client async / WASM browser client.
@@ -411,3 +413,8 @@ Record notable plan/scope changes here so the "why" survives.
   rows moved to an operator action: `store::prune_expired_sessions`, exposed as the
   `netplay-server prune-tokens` subcommand and `just prune-tokens` (`deploy/README` documents the
   on-VM invocation). Chose operator-run over a periodic background sweep to avoid the extra moving part.
+- 2026-07-19 — Stage 12 increment 3: `GET /admin/openapi.json` — a hand-written OpenAPI 3.0 document
+  (`openapi.rs`) for the admin REST API, served **unauthenticated** (a client can't be asked for a
+  token to learn how to get one). Hand-written rather than re-adding the `schemars` derive machinery
+  removed in increment 1 — five endpoints don't justify it, and a test asserts every route appears.
+  `just openapi` fetches it. Stage 12 complete bar the SSE `/admin/events` increment.
