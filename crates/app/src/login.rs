@@ -69,9 +69,8 @@ pub fn ui(ctx: &egui::Context, form: &mut LoginForm, actions: &mut Vec<LoginActi
                     ui.add_space(18.0);
                     ui.vertical_centered(|ui| {
                         ui.add_enabled_ui(!form.connecting, |ui| {
-                            let login = ui.add(
-                                egui::Button::new("Log in").min_size(egui::vec2(160.0, 38.0)),
-                            );
+                            let login = ui
+                                .add(egui::Button::new("Log in").min_size(egui::vec2(160.0, 38.0)));
                             if login.clicked() || (enter && !form.connecting) {
                                 actions.push(LoginAction::Submit { register: false });
                             }
