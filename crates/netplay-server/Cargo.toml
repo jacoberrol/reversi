@@ -26,9 +26,16 @@ bytes = "1"
 # hyper-tungstenite). We don't do the handshake ourselves — hyper does.
 tokio-tungstenite = { version = "0.30", default-features = false }
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
+# Persistent state (accounts, roles). SQLite is bundled (compiled from source),
+# so no system libsqlite3 — the static-musl deploy build needs only musl-tools.
+# Migrations are embedded at build time and run on startup; runtime query API
+# (no compile-time DB), so CI needs no database.
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros"] }
 
 [dev-dependencies]
 # The relay test drives the server over WebSocket (same version as the runtime
 # dep, so the test build has a single `tokio_tungstenite`).
 tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "handshake"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
+# Throwaway on-disk SQLite for store tests.
+tempfile = "3"

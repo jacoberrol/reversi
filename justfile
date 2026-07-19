@@ -10,6 +10,11 @@ default:
 test:
     cargo test --workspace
 
+# Scaffold a new timestamped SQL migration under the server's migrations/ dir.
+# Needs sqlx-cli: cargo install sqlx-cli --no-default-features --features sqlite
+migrate-add NAME:
+    sqlx migrate add --source crates/netplay-server/migrations {{NAME}}
+
 # Remove all build artifacts (the whole target/, including rust-analyzer's dir).
 clean:
     cargo clean

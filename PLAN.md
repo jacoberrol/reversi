@@ -202,10 +202,19 @@ contract while keeping serde/JSON (readable; we own both ends).
   `PlayerLeft`/`MatchStarted`, so the TUI updates without polling. The lobby marks subscribed
   connections and broadcasts events to them. In the published `/schema`.
 
-**Deferred:** user accounts / persistent identity (the moment durable identity enters, the server
-gains a **DB** and stops being a stateless relay — the biggest inflection; lands behind the same
-`Authenticator` seam when a real need forces it); separate repo / published crate (until a second
-consumer exists); N-player / spectating / reconnect; client async / WASM browser client.
+### Stage 10 — Accounts + RBAC on SQLite 🔨
+Durable identity: the relay gains a database. Named accounts have a role; the admin surface is gated
+on it (closing the admin-RBAC backlog item). Anonymous play (shared token → `player`) stays.
+- ✅ **Increment 1 — DB infrastructure.** `sqlx` + bundled SQLite; `store` module opens the DB
+  (`NETPLAY_DB`, default `./netplay.db`) and runs embedded migrations on startup; `users` table
+  (`0001_create_users.sql`). Ansible: `StateDirectory=netplay` + `NETPLAY_DB`. `just migrate-add`.
+  No behavior change yet.
+- 🔮 **Increment 2 — Accounts + RBAC.** `Identity.role`; a DB-backed authenticator (accounts +
+  shared-token anonymous fallback + `NETPLAY_ADMIN` env-seeded admin); the relay rejects admin
+  messages from non-admins. Add the `NETPLAY_ADMIN` secret to the deploy workflow.
+
+**Deferred:** separate repo / published crate (until a second consumer exists); N-player /
+spectating / reconnect; client async / WASM browser client.
 
 **Open questions:** WASM/web client ever wanted (the only thing that would force client async)?
 token format (plain versioned random over TLS is likely enough); where the per-IP limiter lives
@@ -316,3 +325,8 @@ Record notable plan/scope changes here so the "why" survives.
   message per variant** (`ClientHello`, `ServerMatched`, …; prefixed since `Game` is on both sides)
   so tooling shows a real catalog instead of anonymous "any" unions, and gave the opaque `credential`
   a *described* schema instead of a bare any.
+- 2026-07-19 — Stage 10 increment 1: DB infrastructure. Added `sqlx` + bundled SQLite; a `store`
+  module opens `NETPLAY_DB` (default `./netplay.db`), creating it and running embedded migrations on
+  startup; first migration `0001_create_users.sql` (`users`: name, token_hash, role). Ansible unit
+  gained `StateDirectory=netplay` + `NETPLAY_DB=/var/lib/netplay/netplay.db`. `just migrate-add`;
+  local DBs gitignored. No behavior change — the store just exists; auth still shared-token.

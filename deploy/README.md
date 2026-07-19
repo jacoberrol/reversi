@@ -27,6 +27,11 @@ client  --wss://relay.netplay.oliverj.network-->  exe.dev proxy (TLS)
 The playbook is idempotent: it only restarts the service when the binary, the
 tokens, or the unit actually change.
 
+**State:** the unit declares `StateDirectory=netplay`, so systemd owns
+`/var/lib/netplay` (writable despite `ProtectSystem=strict`); the server keeps
+its SQLite database there (`NETPLAY_DB`) and migrates it on startup. The DB
+survives redeploys and restarts; nothing in the playbook touches it.
+
 ## One-time setup
 
 ### 1. Create a dedicated CI deploy key

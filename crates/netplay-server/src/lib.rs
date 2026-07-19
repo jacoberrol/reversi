@@ -10,6 +10,7 @@
 pub mod auth;
 pub mod limits;
 pub mod lobby;
+pub mod store;
 
 use std::convert::Infallible;
 use std::sync::{Arc, Mutex};
