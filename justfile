@@ -23,9 +23,18 @@ serve ADDR="127.0.0.1:5000":
 play URL="ws://127.0.0.1:5000" NAME="Player":
     cargo run -p app -- --server {{URL}} --name {{NAME}}
 
-# Launch the game against the public relay (baked-in wss:// URL). No server needed.
+# Store the relay auth token in your macOS login Keychain (prompts, no echo).
+# Run once; `just online` reads it from there so you never export NETPLAY_TOKEN.
+set-token:
+    security add-generic-password -U -a "$USER" -s netplay-token -w
+    @echo "stored 'netplay-token' in your login keychain"
+
+# The token comes from an already-set NETPLAY_TOKEN, else the Keychain (see
+# `just set-token`), else the dev default (which the deployed relay rejects).
+# Play against the public relay (baked-in wss:// URL) — no local server needed.
 online NAME="Player":
-    cargo run -p app -- --online --name {{NAME}}
+    NETPLAY_TOKEN="${NETPLAY_TOKEN:-$(security find-generic-password -s netplay-token -w 2>/dev/null || true)}" \
+      cargo run -p app -- --online --name {{NAME}}
 
 # Deploy the relay to the exe.dev VM (manual GitHub Actions workflow).
 # Requires the DEPLOY_SSH_KEY and NETPLAY_TOKENS repo secrets — see deploy/README.md.
