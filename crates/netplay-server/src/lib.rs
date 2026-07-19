@@ -1,19 +1,30 @@
 //! Reusable relay/matchmaking server library (WebSocket transport).
 //!
-//! [`serve`] accepts WebSocket connections, authorizes and rate-limits them,
-//! runs a lobby (presence + invites), and relays paired players' opaque game
+//! [`serve`] runs a minimal HTTP/1 front on each connection: `GET /schema`
+//! returns the self-describing service descriptor, and a WebSocket upgrade on
+//! `/` hands the socket to the relay — which authorizes, rate-limits, runs the
+//! lobby (presence + invites), and forwards paired players' opaque game
 //! payloads. TLS is handled by a front proxy at deploy time; this server speaks
-//! plain `ws://`. Game-agnostic — it never decodes the payload.
+//! plain `ws://`/`http://`. Game-agnostic — it never decodes the payload.
 
 pub mod auth;
 pub mod limits;
 pub mod lobby;
 
+use std::convert::Infallible;
 use std::sync::{Arc, Mutex};
 
 use auth::Authenticator;
+use bytes::Bytes;
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
+use http_body_util::Full;
+use hyper::body::Incoming;
+use hyper::server::conn::http1;
+use hyper::service::service_fn;
+use hyper::upgrade::Upgraded;
+use hyper::{Method, Request, Response, StatusCode};
+use hyper_util::rt::{TokioIo, TokioTimer};
 use limits::{IpGuard, IpLimiter};
 use lobby::LobbyCmd;
 use netplay_protocol::{ClientMsg, ServerMsg, MAX_MESSAGE, PROTOCOL_VERSION};
@@ -22,11 +33,15 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::WebSocketStream;
 
-type WsSink = SplitSink<WebSocketStream<TcpStream>, Message>;
-type WsSource = SplitStream<WebSocketStream<TcpStream>>;
+/// The WebSocket stream after hyper upgrades the connection.
+type WsStream = WebSocketStream<TokioIo<Upgraded>>;
+type WsSink = SplitSink<WsStream, Message>;
+type WsSource = SplitStream<WsStream>;
+type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
-/// Accept and serve WebSocket connections on `listener`, authorizing each with
-/// `auth`. Runs the lobby task internally; never returns under normal operation.
+/// Accept connections on `listener`, serving each with an HTTP/1 front (schema +
+/// WebSocket upgrade) authorized by `auth`. Runs the lobby task internally;
+/// never returns under normal operation.
 pub async fn serve(listener: TcpListener, auth: Arc<dyn Authenticator>) {
     let (lobby_tx, lobby_rx) = mpsc::channel(64);
     tokio::spawn(lobby::run(lobby_rx));
@@ -47,9 +62,7 @@ pub async fn serve(listener: TcpListener, auth: Arc<dyn Authenticator>) {
                 let auth = auth.clone();
                 tokio::spawn(async move {
                     let _guard = guard; // releases the IP slot when the task ends
-                    if let Err(e) = handle(stream, lobby_tx, auth).await {
-                        eprintln!("connection error: {e}");
-                    }
+                    serve_connection(stream, lobby_tx, auth).await;
                 });
             }
             Err(e) => eprintln!("accept error: {e}"),
@@ -57,35 +70,75 @@ pub async fn serve(listener: TcpListener, auth: Arc<dyn Authenticator>) {
     }
 }
 
-type BoxError = Box<dyn std::error::Error + Send + Sync>;
-
-/// Handle one client: WebSocket handshake, authorize, join the lobby, then relay.
-async fn handle(
+/// Run the HTTP/1 front over one accepted TCP connection.
+async fn serve_connection(
     stream: TcpStream,
     lobby_tx: mpsc::Sender<LobbyCmd>,
     auth: Arc<dyn Authenticator>,
-) -> Result<(), BoxError> {
-    // The WebSocket upgrade must complete within the handshake window.
-    let ws = match tokio::time::timeout(
-        limits::HANDSHAKE_TIMEOUT,
-        tokio_tungstenite::accept_async(stream),
-    )
-    .await
-    {
-        Ok(Ok(ws)) => ws,
-        // Not a WebSocket handshake — a health check, scanner, or plain HTTP
-        // probe. Expected on a public endpoint; refuse quietly rather than
-        // logging it as a connection error.
-        Ok(Err(e)) => {
-            println!("ignored non-websocket connection: {e}");
-            return Ok(());
-        }
-        Err(_) => {
-            eprintln!("rate-limit: websocket handshake timed out");
-            return Ok(());
-        }
-    };
+) {
+    let io = TokioIo::new(stream);
+    let service = service_fn(move |req| {
+        let lobby_tx = lobby_tx.clone();
+        let auth = auth.clone();
+        async move { route(req, lobby_tx, auth).await }
+    });
 
+    let mut builder = http1::Builder::new();
+    // Bound how long a client may dawdle sending request headers (slow-loris).
+    // header_read_timeout requires a registered timer.
+    builder.timer(TokioTimer::new());
+    builder.header_read_timeout(limits::HANDSHAKE_TIMEOUT);
+    if let Err(e) = builder.serve_connection(io, service).with_upgrades().await {
+        // A malformed request (scanner / bad probe) is expected on a public port.
+        eprintln!("http connection ended: {e}");
+    }
+}
+
+/// Route one HTTP request: the schema document, a WebSocket upgrade, or 404.
+async fn route(
+    mut req: Request<Incoming>,
+    lobby_tx: mpsc::Sender<LobbyCmd>,
+    auth: Arc<dyn Authenticator>,
+) -> Result<Response<Full<Bytes>>, Infallible> {
+    // Self-describing wire contract for non-Rust clients.
+    if req.method() == Method::GET && req.uri().path() == "/schema" {
+        let body = netplay_protocol::service_descriptor().to_string();
+        return Ok(json_ok(body));
+    }
+
+    // A WebSocket upgrade → hand the socket to the relay.
+    if hyper_tungstenite::is_upgrade_request(&req) {
+        match hyper_tungstenite::upgrade(&mut req, None) {
+            Ok((response, websocket)) => {
+                tokio::spawn(async move {
+                    match websocket.await {
+                        Ok(ws) => {
+                            if let Err(e) = relay(ws, lobby_tx, auth).await {
+                                eprintln!("connection error: {e}");
+                            }
+                        }
+                        Err(e) => eprintln!("websocket upgrade failed: {e}"),
+                    }
+                });
+                return Ok(response);
+            }
+            Err(e) => {
+                eprintln!("bad websocket upgrade: {e}");
+                return Ok(text(StatusCode::BAD_REQUEST, "bad upgrade"));
+            }
+        }
+    }
+
+    // Not the schema, not a WebSocket — a health check, scanner, or plain probe.
+    Ok(text(StatusCode::NOT_FOUND, "not found"))
+}
+
+/// Relay one authorized client: read Hello, authorize, join the lobby, forward.
+async fn relay(
+    ws: WsStream,
+    lobby_tx: mpsc::Sender<LobbyCmd>,
+    auth: Arc<dyn Authenticator>,
+) -> Result<(), BoxError> {
     let (sink, mut source) = ws.split();
     let (outbox, out_rx) = mpsc::channel::<ServerMsg>(32);
     tokio::spawn(writer(sink, out_rx));
@@ -216,4 +269,22 @@ async fn next_client(source: &mut WsSource) -> Option<ClientMsg> {
             Err(_) => return None,
         }
     }
+}
+
+/// A `200 OK` JSON response.
+fn json_ok(body: String) -> Response<Full<Bytes>> {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(hyper::header::CONTENT_TYPE, "application/json")
+        .body(Full::new(Bytes::from(body)))
+        .expect("response builds")
+}
+
+/// A plain-text response with `status`.
+fn text(status: StatusCode, msg: &'static str) -> Response<Full<Bytes>> {
+    Response::builder()
+        .status(status)
+        .header(hyper::header::CONTENT_TYPE, "text/plain")
+        .body(Full::new(Bytes::from_static(msg.as_bytes())))
+        .expect("response builds")
 }

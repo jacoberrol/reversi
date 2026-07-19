@@ -192,8 +192,9 @@ contract while keeping serde/JSON (readable; we own both ends).
 - ✅ **Increment 1 — Normalize the wire shape.** Internally-tagged JSON (`#[serde(tag = "type")]`)
   across `ClientMsg`/`ServerMsg`/`GameMsg`; `Game`/`Error` became struct variants. Flag-day break
   (redeploy server + rebuild clients together). Shape pinned by a test.
-- 🔮 **Increment 2 — `/schema` endpoint.** `schemars`-generated JSON Schema served over a minimal
-  `hyper-tungstenite` HTTP front (`GET /schema`; `/` still upgrades to WS). Self-describing service.
+- ✅ **Increment 2 — `/schema` endpoint.** `schemars`-generated JSON Schema (behind a `schema`
+  feature) served as a service descriptor over a minimal `hyper` HTTP/1 front (`GET /schema`; `/`
+  upgrades to WS via `hyper-tungstenite`). Self-describing service; tested end-to-end.
 - 🔮 **Increment 3 — Admin surface (dev, no RBAC).** Admin message types + lobby-actor queries /
   event subscription (list players/matches, stats, live event tail). RBAC stays on the backlog.
 
@@ -286,3 +287,8 @@ Record notable plan/scope changes here so the "why" survives.
   (`#[serde(tag = "type")]`) across `ClientMsg`/`ServerMsg`/`GameMsg`; `Game`/`Error` became struct
   variants (`{payload}`/`{message}`). Flat `{"type":…}` shape pinned by a test. Flag-day break — the
   deployed relay needs a redeploy and clients a rebuild together.
+- 2026-07-18 — Stage 9 increment 2: self-describing `/schema` endpoint. `schemars` (behind a
+  `schema` feature; client stays lean) generates JSON Schema for the wire types; `service_descriptor()`
+  wraps it with metadata. The server grew a minimal `hyper` HTTP/1 front — `GET /schema` returns the
+  descriptor, `/` upgrades to WebSocket via `hyper-tungstenite` — replacing the raw `accept_async`
+  path. `just schema` fetches it. Tested end-to-end (plain GET + the WS relay over the new front).
