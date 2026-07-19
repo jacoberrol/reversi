@@ -195,8 +195,11 @@ contract while keeping serde/JSON (readable; we own both ends).
 - ✅ **Increment 2 — `/schema` endpoint.** `schemars`-generated JSON Schema (behind a `schema`
   feature) served as a service descriptor over a minimal `hyper` HTTP/1 front (`GET /schema`; `/`
   upgrades to WS via `hyper-tungstenite`). Self-describing service; tested end-to-end.
-- 🔮 **Increment 3 — Admin surface (dev, no RBAC).** Admin message types + lobby-actor queries /
-  event subscription (list players/matches, stats, live event tail). RBAC stays on the backlog.
+- ✅ **Increment 3a — Admin queries (dev, no RBAC).** `ListPlayers`/`ListMatches`/`GetStats`
+  request-reply messages, answered from the lobby actor (oneshot round-trip). In the published
+  `/schema`. RBAC stays on the backlog.
+- 🔮 **Increment 3b — Admin event stream.** `SubscribeEvents` → live push of player joined/left and
+  match started, so the TUI updates without polling. Lobby broadcasts to registered subscribers.
 
 **Deferred:** user accounts / persistent identity (the moment durable identity enters, the server
 gains a **DB** and stops being a stateless relay — the biggest inflection; lands behind the same
@@ -292,3 +295,8 @@ Record notable plan/scope changes here so the "why" survives.
   wraps it with metadata. The server grew a minimal `hyper` HTTP/1 front — `GET /schema` returns the
   descriptor, `/` upgrades to WebSocket via `hyper-tungstenite` — replacing the raw `accept_async`
   path. `just schema` fetches it. Tested end-to-end (plain GET + the WS relay over the new front).
+- 2026-07-18 — Stage 9 increment 3a: admin queries (dev, no RBAC). New `ListPlayers`/`ListMatches`/
+  `GetStats` requests with `Players`/`Matches`/`Stats` replies (in the published schema); the lobby
+  actor answers via a oneshot round-trip and now tracks each player's seat + a start `Instant` for
+  uptime. The game client ignores admin replies. Tested end-to-end (match two players, a third
+  connection queries state).

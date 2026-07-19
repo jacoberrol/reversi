@@ -137,6 +137,61 @@ async fn rejects_a_bad_credential() {
 }
 
 #[tokio::test]
+async fn admin_queries_report_players_matches_and_stats() {
+    let addr = start_server().await;
+    let mut alice = connect_ws(addr, "Alice", dev_credential()).await;
+    let mut bob = connect_ws(addr, "Bob", dev_credential()).await;
+
+    // Match Alice (seat 0, the inviter) and Bob (seat 1).
+    let bob_id = loop {
+        if let ServerMsg::Presence { players } = recv(&mut alice).await {
+            if let Some(p) = players.first() {
+                break p.id;
+            }
+        }
+    };
+    send(&mut alice, ClientMsg::Invite { to: bob_id }).await;
+    let alice_id = loop {
+        if let ServerMsg::Invited { from, .. } = recv(&mut bob).await {
+            break from;
+        }
+    };
+    send(&mut bob, ClientMsg::Accept { inviter: alice_id }).await;
+    expect_matched(&mut alice).await;
+    expect_matched(&mut bob).await;
+
+    // A third connection queries the relay's admin surface.
+    let mut admin = connect_ws(addr, "admin", dev_credential()).await;
+
+    send(&mut admin, ClientMsg::ListPlayers).await;
+    let players = loop {
+        if let ServerMsg::Players { players } = recv(&mut admin).await {
+            break players;
+        }
+    };
+    assert_eq!(players.len(), 3, "alice, bob, admin");
+
+    send(&mut admin, ClientMsg::ListMatches).await;
+    let matches = loop {
+        if let ServerMsg::Matches { matches } = recv(&mut admin).await {
+            break matches;
+        }
+    };
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0].seat0.name, "Alice", "the inviter is seat 0");
+    assert_eq!(matches[0].seat1.name, "Bob");
+
+    send(&mut admin, ClientMsg::GetStats).await;
+    let stats = loop {
+        if let ServerMsg::Stats { stats } = recv(&mut admin).await {
+            break stats;
+        }
+    };
+    assert_eq!(stats.players_online, 3);
+    assert_eq!(stats.matches_active, 1);
+}
+
+#[tokio::test]
 async fn schema_endpoint_serves_the_descriptor() {
     let addr = start_server().await;
     // A plain HTTP GET (no WebSocket upgrade) on the same endpoint.
