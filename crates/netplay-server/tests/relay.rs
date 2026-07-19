@@ -107,10 +107,21 @@ async fn invite_accept_relays_and_reports_disconnect() {
     assert_ne!(a_seat, b_seat, "players must get different seats");
 
     // Opaque payloads relay both ways (the server never decodes them).
-    send(&mut alice, ClientMsg::Game(vec![19])).await;
-    assert_eq!(recv(&mut bob).await, ServerMsg::Game(vec![19]));
-    send(&mut bob, ClientMsg::Game(vec![2, 6])).await;
-    assert_eq!(recv(&mut alice).await, ServerMsg::Game(vec![2, 6]));
+    send(&mut alice, ClientMsg::Game { payload: vec![19] }).await;
+    assert_eq!(recv(&mut bob).await, ServerMsg::Game { payload: vec![19] });
+    send(
+        &mut bob,
+        ClientMsg::Game {
+            payload: vec![2, 6],
+        },
+    )
+    .await;
+    assert_eq!(
+        recv(&mut alice).await,
+        ServerMsg::Game {
+            payload: vec![2, 6]
+        }
+    );
 
     // When Alice drops, Bob is told the opponent left.
     drop(alice);
@@ -121,5 +132,5 @@ async fn invite_accept_relays_and_reports_disconnect() {
 async fn rejects_a_bad_credential() {
     let addr = start_server().await;
     let mut ws = connect_ws(addr, "Mallory", b"garbage".to_vec()).await;
-    assert!(matches!(recv(&mut ws).await, ServerMsg::Error(_)));
+    assert!(matches!(recv(&mut ws).await, ServerMsg::Error { .. }));
 }

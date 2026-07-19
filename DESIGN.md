@@ -116,6 +116,14 @@ Rust server on a cloud VM. We build the real topology now and stage toward that.
 - **A shared `protocol` crate (serde).** One source of truth for the wire format, reused by
   the client and the server. Primitive fields only (a move is a `u8`), so `game-core` never
   gains a serialization dependency and the server never depends on game logic.
+- **Internally-tagged JSON (`#[serde(tag = "type")]`).** Every message serializes as a flat
+  object with a `"type"` discriminator (`{"type":"Invite","to":3}`) — the conventional
+  tagged-union shape a non-Rust client expects, chosen so an admin tool (a Go TUI) can consume
+  the protocol without matching serde's default externally-tagged encoding. This forced the
+  two odd variants (`Game`, `Error`) from newtype into struct variants (`Game { payload }`,
+  `Error { message }`), since internal tagging can't wrap a bare array/string. We kept JSON
+  (not protobuf): it's human-readable in logs and we own both ends, and a self-describing
+  `/schema` endpoint (planned) recovers the cross-language rigor without a binary codec.
 - **The winit loop stays synchronous; networking uses a runtime off to the side.** The relay
   (`netplay-server`) uses tokio (per-connection tasks + an in-memory lobby actor). The client
   runs its WebSocket on a **single-thread tokio runtime confined to a dedicated network thread**,

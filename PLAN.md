@@ -186,6 +186,17 @@ tamper-proof.
 - 🔮 **Stage E (later) — Attestation.** Swap `AuthProvider` to App Attest (iOS) / Play Integrity
   (Android) behind the unchanged seam. Web-distributed macOS stays at token+TLS deterrence.
 
+### Stage 9 — Self-describing protocol + admin console 🔮
+Motivated by an out-of-repo Go admin TUI: give the relay a rigorous, published, cross-language
+contract while keeping serde/JSON (readable; we own both ends).
+- ✅ **Increment 1 — Normalize the wire shape.** Internally-tagged JSON (`#[serde(tag = "type")]`)
+  across `ClientMsg`/`ServerMsg`/`GameMsg`; `Game`/`Error` became struct variants. Flag-day break
+  (redeploy server + rebuild clients together). Shape pinned by a test.
+- 🔮 **Increment 2 — `/schema` endpoint.** `schemars`-generated JSON Schema served over a minimal
+  `hyper-tungstenite` HTTP front (`GET /schema`; `/` still upgrades to WS). Self-describing service.
+- 🔮 **Increment 3 — Admin surface (dev, no RBAC).** Admin message types + lobby-actor queries /
+  event subscription (list players/matches, stats, live event tail). RBAC stays on the backlog.
+
 **Deferred:** user accounts / persistent identity (the moment durable identity enters, the server
 gains a **DB** and stops being a stateless relay — the biggest inflection; lands behind the same
 `Authenticator` seam when a real need forces it); separate repo / published crate (until a second
@@ -271,3 +282,7 @@ Record notable plan/scope changes here so the "why" survives.
   (GH Secrets). Client bakes in `DEFAULT_RELAY_URL` = `wss://relay.netplay.oliverj.network` (`--online`)
   and reads its shared token from `NETPLAY_TOKEN` env (dev default if unset — secret never baked in);
   `just online` / `just deploy` added. Owner supplies secrets and triggers the workflow.
+- 2026-07-18 — Stage 9 increment 1: normalized the wire shape to internally-tagged JSON
+  (`#[serde(tag = "type")]`) across `ClientMsg`/`ServerMsg`/`GameMsg`; `Game`/`Error` became struct
+  variants (`{payload}`/`{message}`). Flat `{"type":…}` shape pinned by a test. Flag-day break — the
+  deployed relay needs a redeploy and clients a rebuild together.
