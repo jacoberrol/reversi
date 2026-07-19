@@ -23,11 +23,26 @@ serve ADDR="127.0.0.1:5000":
 play URL="ws://127.0.0.1:5000" NAME="Player":
     cargo run -p app -- --server {{URL}} --name {{NAME}}
 
-# Store the relay auth token in your macOS login Keychain (prompts, no echo).
-# Run once; `just online` reads it from there so you never export NETPLAY_TOKEN.
+# Prompts for a token (no echo) and stores it in the macOS login Keychain.
+# Owners mint tokens with `just rotate-token` instead.
+# Store a token to JOIN a relay someone else runs.
 set-token:
     security add-generic-password -U -a "$USER" -s netplay-token -w
     @echo "stored 'netplay-token' in your login keychain"
+
+# Stores it in BOTH the macOS Keychain (for `just online`) and the
+# NETPLAY_TOKENS GitHub secret (for the server). KEY_ID is any small integer
+# (avoid the dev id 1). Run `just deploy` after so the server picks it up.
+# Owner: mint a fresh relay token into the Keychain + GitHub secret.
+rotate-token KEY_ID="2":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v gh >/dev/null || { echo "gh CLI not found (brew install gh)"; exit 1; }
+    token="{{KEY_ID}}:$(openssl rand -hex 32)"
+    security add-generic-password -U -a "$USER" -s netplay-token -w "$token"
+    printf '%s' "$token" | gh secret set NETPLAY_TOKENS
+    echo "rotated: new token in Keychain + GitHub secret NETPLAY_TOKENS"
+    echo "next: 'just deploy' to apply it on the relay (the old token works until then)"
 
 # The token comes from an already-set NETPLAY_TOKEN, else the Keychain (see
 # `just set-token`), else the dev default (which the deployed relay rejects).
