@@ -42,8 +42,7 @@ pub enum LobbyCmd {
         id: PlayerId,
     },
 
-    // Admin/control queries (see the `ClientMsg` admin requests). Reply over a
-    // oneshot; the connection task forwards the result to its client.
+    // Read queries for the admin REST API, answered over a oneshot.
     ListPlayers {
         reply: oneshot::Sender<Vec<PlayerInfo>>,
     },
@@ -52,9 +51,6 @@ pub enum LobbyCmd {
     },
     Stats {
         reply: oneshot::Sender<ServerStats>,
-    },
-    Subscribe {
-        id: PlayerId,
     },
 }
 
@@ -65,8 +61,6 @@ struct Player {
     partner: Option<PlayerId>,
     /// This player's seat while in a game (seat 0 = inviter), else `None`.
     seat: Option<Seat>,
-    /// Whether this connection subscribed to the admin event stream.
-    subscribed: bool,
 }
 
 struct Lobby {
@@ -114,17 +108,10 @@ impl Lobby {
                         outbox,
                         partner: None,
                         seat: None,
-                        subscribed: false,
                     },
                 );
                 let _ = reply.send(Some(id));
                 println!("player {id} joined");
-                let player = PlayerInfo {
-                    id,
-                    name: self.players[&id].name.clone(),
-                };
-                self.broadcast_event(ServerMsg::PlayerJoined { player })
-                    .await;
                 self.broadcast_presence().await;
             }
 
@@ -164,7 +151,6 @@ impl Lobby {
                         self.send(partner, ServerMsg::OpponentLeft).await;
                     }
                     println!("player {id} left");
-                    self.broadcast_event(ServerMsg::PlayerLeft { id }).await;
                     self.broadcast_presence().await;
                 }
             }
@@ -178,24 +164,6 @@ impl Lobby {
             LobbyCmd::Stats { reply } => {
                 let _ = reply.send(self.stats());
             }
-            LobbyCmd::Subscribe { id } => {
-                if let Some(p) = self.players.get_mut(&id) {
-                    p.subscribed = true;
-                }
-            }
-        }
-    }
-
-    /// Push an event to every connection that subscribed to the event stream.
-    async fn broadcast_event(&self, event: ServerMsg) {
-        let subscribers: Vec<PlayerId> = self
-            .players
-            .iter()
-            .filter(|(_, p)| p.subscribed)
-            .map(|(&id, _)| id)
-            .collect();
-        for id in subscribers {
-            self.send(id, event.clone()).await;
         }
     }
 
@@ -266,7 +234,7 @@ impl Lobby {
             inviter,
             ServerMsg::Matched {
                 seat: Seat(0),
-                opponent: accepter_name.clone(),
+                opponent: accepter_name,
             },
         )
         .await;
@@ -274,24 +242,11 @@ impl Lobby {
             accepter,
             ServerMsg::Matched {
                 seat: Seat(1),
-                opponent: inviter_name.clone(),
+                opponent: inviter_name,
             },
         )
         .await;
         println!("matched {inviter} (seat 0) vs {accepter} (seat 1)");
-        self.broadcast_event(ServerMsg::MatchStarted {
-            pairing: MatchInfo {
-                seat0: PlayerInfo {
-                    id: inviter,
-                    name: inviter_name,
-                },
-                seat1: PlayerInfo {
-                    id: accepter,
-                    name: accepter_name,
-                },
-            },
-        })
-        .await;
         self.broadcast_presence().await;
     }
 

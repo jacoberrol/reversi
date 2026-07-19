@@ -217,7 +217,7 @@ on it (closing the admin-RBAC backlog item). Anonymous play (shared token → `p
   added to the deploy workflow. argon2 verify runs on `spawn_blocking`; a dev-profile `opt-level=3`
   for argon2/blake2 keeps debug/CI test runs fast.
 
-### Stage 11 — Accounts-only: in-app login/register 🔨
+### Stage 11 — Accounts-only: in-app login/register ✅
 Remove anonymous play and the shared token entirely; every client logs in or self-registers with a
 name + password. Open registration (anyone can create an account). Reverses two recorded decisions
 (the shared-token deterrence gate; anonymous play).
@@ -235,6 +235,23 @@ name + password. Open registration (anyone can create an account). Reverses two 
   `rotate-token`/`set-token` recipes; dropped the dead `AuthError::{UnknownKey,BadToken}`. `just deploy`
   no longer needs the `NETPLAY_TOKENS` secret (env template/workflow updated); docs updated.
 
+### Stage 12 — Admin REST control plane (own host, bearer sessions) 🔨
+Move admin off the gameplay WebSocket. The relay routes by requested hostname: the admin host
+(`admin.netplay.oliverj.network`, `NETPLAY_ADMIN_HOST`; both it and `relay.*` resolve to the same
+IP:port, split on the proxy's `X-Forwarded-Host`) serves a **REST admin API**; every other host is
+the game WebSocket, which now carries *only* gameplay. Supersedes Stage 9's WS admin console +
+`/schema`/`/asyncapi.json` docs (removed).
+- 🔨 **Increment 1 — Strip WS to gameplay + REST control plane.** Removed the admin `ClientMsg`/
+  `ServerMsg` variants, lobby `Subscribe`/broadcast, and the `schemars` schema surface (`/schema`,
+  `/asyncapi.json`, the `schema` feature). New `sessions` table (`0002`); `store` gains
+  session-token create/verify (256-bit random token, **sha256-hashed** at rest, TTL, lazy prune).
+  New `admin` module: `POST /admin/login` (`{name,password}` → bearer token, admin-only) and
+  bearer-guarded `GET /admin/{players,matches,stats}`. `serve` takes the admin host and routes on
+  it. `just schema`/`asyncapi` recipes removed; `NETPLAY_ADMIN_HOST` added to the systemd unit.
+- 🔮 **Increment 2 — SSE `/admin/events`.** Re-add lobby event broadcast, streamed to bearer-guarded
+  SSE subscribers (replaces the old WS `SubscribeEvents`).
+- 🔮 **Increment 3 — `GET /admin/openapi.json`.** OpenAPI document describing the admin REST API.
+
 **Deferred:** separate repo / published crate (until a second consumer exists); N-player /
 spectating / reconnect; client async / WASM browser client.
 
@@ -243,12 +260,6 @@ token format (plain versioned random over TLS is likely enough); where the per-I
 (standalone type vs. folded into the lobby actor).
 
 ## Backlog / future (post-Stage 7) 🔮
-- 🔮 **Admin RBAC** — role-based authorization for the admin/control messages that will ride the public
-  relay (alongside the player messages, same serde/WebSocket transport). During development any
-  authenticated connection may invoke admin ops; **before non-dev use** this must be gated: a distinct
-  admin credential (not the shared player token), a role on the auth seam's `Identity`, an admin-only
-  dispatch check, and admin connections exempt from the lobby cap / `Presence`. Deferred deliberately —
-  not needed while under dev. See DESIGN §9 (auth seam) and the honest "a client can't keep a secret" note.
 - 🔮 **Search: move ordering** in alpha-beta (try corners / high-mobility / previous-best moves first, or
   order by a shallow pass). Better ordering ⇒ far more pruning ⇒ effectively deeper search at the same cost.
 - 🔮 **Search: exact endgame solver** — once ≤ ~14–16 empties remain, search to the end on exact disc
@@ -375,3 +386,14 @@ Record notable plan/scope changes here so the "why" survives.
   env + `rotate-token`/`set-token` recipes, and the dead `AuthError::{UnknownKey,BadToken}`.
   `just deploy` drops the `NETPLAY_TOKENS` secret (env template + workflow); DESIGN/deploy docs
   updated. Stage 11 complete.
+- 2026-07-19 — Stage 12 increment 1: admin moved off the gameplay WebSocket onto a REST control
+  plane on its own host. The server now routes on the requested hostname (proxy's
+  `X-Forwarded-Host`, else `Host`): the admin host (`NETPLAY_ADMIN_HOST`, default
+  `admin.netplay.oliverj.network`) → REST `admin` module; every other host → game WebSocket, now
+  gameplay-only. `POST /admin/login` returns a bearer token (admin accounts only), stored
+  sha256-hashed in a new `sessions` table (`0002`, TTL + lazy prune); `GET /admin/{players,matches,
+  stats}` are bearer-guarded. Removed the admin `ClientMsg`/`ServerMsg` variants, the lobby
+  `Subscribe`/event broadcast, and the entire `schemars` schema surface (`/schema`, `/asyncapi.json`,
+  the `schema` feature, `just schema`/`asyncapi`). Added `sha2` dep, `NETPLAY_ADMIN_HOST` to the
+  systemd unit. Supersedes Stage 9's WS admin console. SSE `/admin/events` + `/admin/openapi.json`
+  land in increments 2–3.

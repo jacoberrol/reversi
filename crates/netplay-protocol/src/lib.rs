@@ -26,7 +26,6 @@ pub type PlayerId = u64;
 
 /// A player as advertised in the lobby presence list.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct PlayerInfo {
     pub id: PlayerId,
     pub name: String,
@@ -35,12 +34,10 @@ pub struct PlayerInfo {
 /// An abstract seat in a match; seat 0 moves first. The game maps this to its
 /// own player type (e.g. Reversi: seat 0 = Black).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Seat(pub u8);
 
 /// An active match, for the admin/control surface: the two paired players by seat.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct MatchInfo {
     pub seat0: PlayerInfo,
     pub seat1: PlayerInfo,
@@ -48,7 +45,6 @@ pub struct MatchInfo {
 
 /// A snapshot of relay counters, for the admin/control surface.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ServerStats {
     pub players_online: u32,
     pub matches_active: u32,
@@ -61,7 +57,6 @@ pub struct ServerStats {
 /// `"type"` discriminator (e.g. `{"type":"Invite","to":3}`), so non-Rust
 /// clients can model it as a conventional tagged union.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "type")]
 pub enum ClientMsg {
     /// First message on connect: the player's display name, protocol version,
@@ -71,7 +66,6 @@ pub enum ClientMsg {
     Hello {
         name: String,
         protocol: u16,
-        #[cfg_attr(feature = "schema", schemars(schema_with = "opaque_credential_schema"))]
         credential: serde_json::Value,
     },
     /// Invite another player (by id) to a game.
@@ -82,25 +76,12 @@ pub enum ClientMsg {
     Decline { inviter: PlayerId },
     /// An opaque in-game payload, to be relayed to the opponent verbatim.
     Game { payload: Vec<u8> },
-
-    // Admin/control requests. Gated by an admin-role account (see DESIGN §9);
-    // non-admins are refused. Each has a matching reply below.
-    /// List every connected player.
-    ListPlayers,
-    /// List every active match.
-    ListMatches,
-    /// Fetch a snapshot of relay counters.
-    GetStats,
-    /// Subscribe to the live event stream (player joined/left, match started).
-    /// The server pushes `PlayerJoined`/`PlayerLeft`/`MatchStarted` thereafter.
-    SubscribeEvents,
 }
 
 /// A message from the server to a client.
 ///
 /// Internally tagged with a `"type"` discriminator, like [`ClientMsg`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "type")]
 pub enum ServerMsg {
     /// The other players currently available in the lobby.
@@ -117,22 +98,6 @@ pub enum ServerMsg {
     OpponentLeft,
     /// A protocol-level error (e.g. version mismatch); the connection closes.
     Error { message: String },
-
-    // Admin/control replies (see the matching `ClientMsg` requests).
-    /// Every connected player (reply to `ListPlayers`).
-    Players { players: Vec<PlayerInfo> },
-    /// Every active match (reply to `ListMatches`).
-    Matches { matches: Vec<MatchInfo> },
-    /// A relay counter snapshot (reply to `GetStats`).
-    Stats { stats: ServerStats },
-
-    // Admin/control event stream (pushed to `SubscribeEvents` subscribers).
-    /// A player connected.
-    PlayerJoined { player: PlayerInfo },
-    /// A player disconnected.
-    PlayerLeft { id: PlayerId },
-    /// Two players were paired.
-    MatchStarted { pairing: MatchInfo },
 }
 
 /// Serialize a message to bytes (the body of one WebSocket message).
@@ -143,156 +108,6 @@ pub fn to_bytes<T: Serialize>(msg: &T) -> Vec<u8> {
 /// Parse a message from a WebSocket message body.
 pub fn decode<T: DeserializeOwned>(bytes: &[u8]) -> serde_json::Result<T> {
     serde_json::from_slice(bytes)
-}
-
-/// A self-describing service manifest: metadata plus the JSON Schema of every
-/// wire message, generated from the Rust types so it can't drift. Served at the
-/// relay's `/schema` endpoint for non-Rust clients (e.g. an admin tool). Behind
-/// the `schema` feature so only the server pulls in `schemars`.
-#[cfg(feature = "schema")]
-pub fn service_descriptor() -> serde_json::Value {
-    serde_json::json!({
-        "service": "reversi-netplay-relay",
-        "protocolVersion": PROTOCOL_VERSION,
-        "transport": "websocket-json",
-        "description": "Game-agnostic netplay relay. Each WebSocket message is one \
-            JSON document, internally tagged with a \"type\" field. The in-game \
-            action rides as opaque bytes in Game.payload.",
-        "messages": {
-            "ClientMsg": serde_json::to_value(schemars::schema_for!(ClientMsg)).unwrap(),
-            "ServerMsg": serde_json::to_value(schemars::schema_for!(ServerMsg)).unwrap(),
-        },
-    })
-}
-
-/// The self-contained JSON Schema of a message type, with subschemas inlined so
-/// there are no `#/definitions` refs to dangle once embedded in a larger doc.
-#[cfg(feature = "schema")]
-fn message_schema<T: schemars::JsonSchema>() -> serde_json::Value {
-    let settings = schemars::gen::SchemaSettings::draft07().with(|s| s.inline_subschemas = true);
-    let schema = schemars::gen::SchemaGenerator::new(settings).into_root_schema_for::<T>();
-    serde_json::to_value(schema).expect("schema serializes")
-}
-
-/// Schema for the opaque `Hello.credential`: any JSON, but *described* so it
-/// renders as documentation rather than a bare "any" in tooling.
-#[cfg(feature = "schema")]
-fn opaque_credential_schema(_: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
-    serde_json::from_value(serde_json::json!({
-        "description": "Opaque authorization credential — arbitrary JSON the server's \
-            authenticator interprets (the relay never inspects it). Account scheme: \
-            {\"name\": <string>, \"password\": <string>, \"register\": <bool, optional>}.",
-    }))
-    .expect("valid schema")
-}
-
-/// Split an internally-tagged enum's JSON Schema into one AsyncAPI *message* per
-/// variant, keyed `{prefix}{Variant}` (the prefix disambiguates the `Game`
-/// variant, which exists on both `ClientMsg` and `ServerMsg`).
-#[cfg(feature = "schema")]
-fn variant_messages(
-    prefix: &str,
-    schema: &serde_json::Value,
-) -> serde_json::Map<String, serde_json::Value> {
-    let mut out = serde_json::Map::new();
-    let variants = schema.get("oneOf").and_then(serde_json::Value::as_array);
-    for variant in variants.into_iter().flatten() {
-        // The variant name is the single value of its `type` discriminator enum.
-        let name = variant
-            .get("properties")
-            .and_then(|p| p.get("type"))
-            .and_then(|t| t.get("enum"))
-            .and_then(serde_json::Value::as_array)
-            .and_then(|e| e.first())
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("Unknown");
-        out.insert(
-            format!("{prefix}{name}"),
-            serde_json::json!({
-                "name": name,
-                "title": name,
-                "contentType": "application/json",
-                "payload": variant,
-            }),
-        );
-    }
-    out
-}
-
-/// An [AsyncAPI 3.0](https://www.asyncapi.com/) document describing the relay's
-/// WebSocket message protocol — the standard, tooling-friendly spec for a
-/// message API (OpenAPI describes HTTP request/response, which this isn't).
-/// Reuses the generated JSON Schemas as the message payloads. Served at
-/// `/asyncapi.json`. Behind the `schema` feature.
-#[cfg(feature = "schema")]
-pub fn asyncapi_document() -> serde_json::Value {
-    use serde_json::{json, Map, Value};
-
-    // One named message per protocol variant (client sends, server sends).
-    let client = variant_messages("Client", &message_schema::<ClientMsg>());
-    let server = variant_messages("Server", &message_schema::<ServerMsg>());
-
-    // The channel advertises every message; the operations partition by direction.
-    let channel_messages: Map<String, Value> = client
-        .keys()
-        .chain(server.keys())
-        .map(|k| {
-            (
-                k.clone(),
-                json!({ "$ref": format!("#/components/messages/{k}") }),
-            )
-        })
-        .collect();
-    let op_messages = |keys: &Map<String, Value>| -> Vec<Value> {
-        keys.keys()
-            .map(|k| json!({ "$ref": format!("#/channels/lobby/messages/{k}") }))
-            .collect()
-    };
-    let receive = op_messages(&client);
-    let send = op_messages(&server);
-    let components: Map<String, Value> = client.into_iter().chain(server).collect();
-
-    json!({
-        "asyncapi": "3.0.0",
-        "info": {
-            "title": "Reversi netplay relay",
-            "version": PROTOCOL_VERSION.to_string(),
-            "description": "Game-agnostic netplay relay. One WebSocket channel carries \
-                JSON messages, each internally tagged with a \"type\" field. The in-game \
-                action rides as opaque bytes in Game.payload.",
-        },
-        "defaultContentType": "application/json",
-        "servers": {
-            "public": {
-                "host": "relay.netplay.oliverj.network",
-                "protocol": "wss",
-                "description": "TLS-fronted public relay.",
-            },
-        },
-        "channels": {
-            "lobby": {
-                "address": "/",
-                "title": "Lobby / match channel",
-                "messages": channel_messages,
-            },
-        },
-        // Actions are from the relay's perspective: it receives client messages, sends server ones.
-        "operations": {
-            "receive": {
-                "action": "receive",
-                "channel": { "$ref": "#/channels/lobby" },
-                "summary": "Messages a client sends to the relay.",
-                "messages": receive,
-            },
-            "send": {
-                "action": "send",
-                "channel": { "$ref": "#/channels/lobby" },
-                "summary": "Messages the relay sends to a client.",
-                "messages": send,
-            },
-        },
-        "components": { "messages": components },
-    })
 }
 
 #[cfg(test)]
@@ -317,10 +132,6 @@ mod tests {
         round_trip_client(ClientMsg::Game {
             payload: vec![1, 2, 3],
         });
-        round_trip_client(ClientMsg::ListPlayers);
-        round_trip_client(ClientMsg::ListMatches);
-        round_trip_client(ClientMsg::GetStats);
-        round_trip_client(ClientMsg::SubscribeEvents);
     }
 
     #[test]
@@ -371,68 +182,9 @@ mod tests {
             ServerMsg::Error {
                 message: "bad version".into(),
             },
-            ServerMsg::Players {
-                players: vec![PlayerInfo {
-                    id: 5,
-                    name: "Dave".into(),
-                }],
-            },
-            ServerMsg::Matches {
-                matches: vec![MatchInfo {
-                    seat0: PlayerInfo {
-                        id: 1,
-                        name: "Bob".into(),
-                    },
-                    seat1: PlayerInfo {
-                        id: 2,
-                        name: "Carol".into(),
-                    },
-                }],
-            },
-            ServerMsg::Stats {
-                stats: ServerStats {
-                    players_online: 3,
-                    matches_active: 1,
-                    uptime_seconds: 42,
-                },
-            },
-            ServerMsg::PlayerJoined {
-                player: PlayerInfo {
-                    id: 5,
-                    name: "Dave".into(),
-                },
-            },
-            ServerMsg::PlayerLeft { id: 5 },
-            ServerMsg::MatchStarted {
-                pairing: MatchInfo {
-                    seat0: PlayerInfo {
-                        id: 1,
-                        name: "Bob".into(),
-                    },
-                    seat1: PlayerInfo {
-                        id: 2,
-                        name: "Carol".into(),
-                    },
-                },
-            },
         ] {
             let decoded: ServerMsg = decode(&to_bytes(&msg)).unwrap();
             assert_eq!(decoded, msg);
         }
-    }
-
-    #[cfg(feature = "schema")]
-    #[test]
-    fn service_descriptor_has_metadata_and_message_schemas() {
-        let d = service_descriptor();
-        assert_eq!(d["protocolVersion"], PROTOCOL_VERSION);
-        assert_eq!(d["transport"], "websocket-json");
-        // Both message schemas are present and non-empty.
-        assert!(d["messages"]["ClientMsg"].is_object());
-        assert!(d["messages"]["ServerMsg"].is_object());
-        // The tagged shape is reflected in the schema (the "type" discriminator).
-        let text = d.to_string();
-        assert!(text.contains("\"type\""));
-        assert!(text.contains("Invite"));
     }
 }

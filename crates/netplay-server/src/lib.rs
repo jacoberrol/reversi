@@ -1,12 +1,13 @@
-//! Reusable relay/matchmaking server library (WebSocket transport).
+//! Reusable relay/matchmaking server library.
 //!
-//! [`serve`] runs a minimal HTTP/1 front on each connection: `GET /schema`
-//! returns the self-describing service descriptor, and a WebSocket upgrade on
-//! `/` hands the socket to the relay — which authorizes, rate-limits, runs the
-//! lobby (presence + invites), and forwards paired players' opaque game
-//! payloads. TLS is handled by a front proxy at deploy time; this server speaks
-//! plain `ws://`/`http://`. Game-agnostic — it never decodes the payload.
+//! [`serve`] runs a minimal HTTP/1 front per connection. Requests to the admin
+//! host (`NETPLAY_ADMIN_HOST`) go to the REST control plane ([`admin`]);
+//! everything else is the game — a WebSocket upgrade hands the socket to the
+//! relay, which authorizes, rate-limits, runs the lobby (presence + invites),
+//! and forwards paired players' opaque game payloads. TLS is a front-proxy
+//! concern; this server speaks plain `ws://`/`http://`. Game-agnostic.
 
+pub mod admin;
 pub mod auth;
 pub mod limits;
 pub mod lobby;
@@ -15,7 +16,7 @@ pub mod store;
 use std::convert::Infallible;
 use std::sync::{Arc, Mutex};
 
-use auth::Authenticator;
+use auth::{Authenticator, DbAuth};
 use bytes::Bytes;
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
@@ -24,12 +25,12 @@ use hyper::body::Incoming;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::upgrade::Upgraded;
-use hyper::{Method, Request, Response, StatusCode};
+use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::{TokioIo, TokioTimer};
 use limits::{IpGuard, IpLimiter};
 use lobby::LobbyCmd;
 use netplay_protocol::{ClientMsg, ServerMsg, MAX_MESSAGE, PROTOCOL_VERSION};
-use store::Role;
+use sqlx::SqlitePool;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, oneshot};
 use tokio_tungstenite::tungstenite::Message;
@@ -41,10 +42,12 @@ type WsSink = SplitSink<WsStream, Message>;
 type WsSource = SplitStream<WsStream>;
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
-/// Accept connections on `listener`, serving each with an HTTP/1 front (schema +
-/// WebSocket upgrade) authorized by `auth`. Runs the lobby task internally;
-/// never returns under normal operation.
-pub async fn serve(listener: TcpListener, auth: Arc<dyn Authenticator>) {
+/// Accept connections on `listener`. Requests to `admin_host` are the REST admin
+/// API; everything else is the game (WebSocket). The `pool` backs the accounts
+/// and admin sessions. Runs the lobby task internally; never returns normally.
+pub async fn serve(listener: TcpListener, pool: SqlitePool, admin_host: String) {
+    let admin_host: Arc<str> = Arc::from(admin_host.to_ascii_lowercase());
+    let auth: Arc<dyn Authenticator> = Arc::new(DbAuth::new(pool.clone()));
     let (lobby_tx, lobby_rx) = mpsc::channel(64);
     tokio::spawn(lobby::run(lobby_rx));
     let limiter = Arc::new(Mutex::new(IpLimiter::new()));
@@ -60,11 +63,15 @@ pub async fn serve(listener: TcpListener, auth: Arc<dyn Authenticator>) {
                 }
                 println!("connection from {peer}");
                 let guard = IpGuard::new(limiter.clone(), ip);
-                let lobby_tx = lobby_tx.clone();
-                let auth = auth.clone();
+                let conn = Conn {
+                    pool: pool.clone(),
+                    lobby_tx: lobby_tx.clone(),
+                    auth: auth.clone(),
+                    admin_host: admin_host.clone(),
+                };
                 tokio::spawn(async move {
                     let _guard = guard; // releases the IP slot when the task ends
-                    serve_connection(stream, lobby_tx, auth).await;
+                    serve_connection(stream, conn).await;
                 });
             }
             Err(e) => eprintln!("accept error: {e}"),
@@ -72,17 +79,21 @@ pub async fn serve(listener: TcpListener, auth: Arc<dyn Authenticator>) {
     }
 }
 
-/// Run the HTTP/1 front over one accepted TCP connection.
-async fn serve_connection(
-    stream: TcpStream,
+/// Shared per-connection context (cheap to clone).
+#[derive(Clone)]
+struct Conn {
+    pool: SqlitePool,
     lobby_tx: mpsc::Sender<LobbyCmd>,
     auth: Arc<dyn Authenticator>,
-) {
+    admin_host: Arc<str>,
+}
+
+/// Run the HTTP/1 front over one accepted TCP connection.
+async fn serve_connection(stream: TcpStream, conn: Conn) {
     let io = TokioIo::new(stream);
     let service = service_fn(move |req| {
-        let lobby_tx = lobby_tx.clone();
-        let auth = auth.clone();
-        async move { route(req, lobby_tx, auth).await }
+        let conn = conn.clone();
+        async move { route(req, conn).await }
     });
 
     let mut builder = http1::Builder::new();
@@ -96,27 +107,22 @@ async fn serve_connection(
     }
 }
 
-/// Route one HTTP request: the schema document, a WebSocket upgrade, or 404.
+/// Route one request: admin REST (admin host), a WebSocket upgrade, or 404.
 async fn route(
     mut req: Request<Incoming>,
-    lobby_tx: mpsc::Sender<LobbyCmd>,
-    auth: Arc<dyn Authenticator>,
+    conn: Conn,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
-    // Self-describing wire contract for non-Rust clients.
-    if req.method() == Method::GET && req.uri().path() == "/schema" {
-        let body = netplay_protocol::service_descriptor().to_string();
-        return Ok(json_ok(body));
-    }
-    // The same contract as a standard AsyncAPI 3.0 document.
-    if req.method() == Method::GET && req.uri().path() == "/asyncapi.json" {
-        let body = netplay_protocol::asyncapi_document().to_string();
-        return Ok(json_ok(body));
+    // The admin host serves the REST control plane.
+    if request_host(&req).as_deref() == Some(conn.admin_host.as_ref()) {
+        return Ok(admin::route(req, conn.pool, conn.lobby_tx).await);
     }
 
-    // A WebSocket upgrade → hand the socket to the relay.
+    // Otherwise the game: a WebSocket upgrade → hand the socket to the relay.
     if hyper_tungstenite::is_upgrade_request(&req) {
         match hyper_tungstenite::upgrade(&mut req, None) {
             Ok((response, websocket)) => {
+                let lobby_tx = conn.lobby_tx;
+                let auth = conn.auth;
                 tokio::spawn(async move {
                     match websocket.await {
                         Ok(ws) => {
@@ -136,8 +142,21 @@ async fn route(
         }
     }
 
-    // Not the schema, not a WebSocket — a health check, scanner, or plain probe.
+    // Not the admin host, not a WebSocket — a health check, scanner, or probe.
     Ok(text(StatusCode::NOT_FOUND, "not found"))
+}
+
+/// The requested hostname (lowercased, no port), preferring the proxy's
+/// `X-Forwarded-Host` over `Host`.
+fn request_host(req: &Request<Incoming>) -> Option<String> {
+    let raw = req
+        .headers()
+        .get("x-forwarded-host")
+        .or_else(|| req.headers().get(hyper::header::HOST))?
+        .to_str()
+        .ok()?;
+    let host = raw.split(':').next().unwrap_or(raw);
+    Some(host.to_ascii_lowercase())
 }
 
 /// Relay one authorized client: read Hello, authorize, join the lobby, forward.
@@ -176,14 +195,9 @@ async fn relay(
         _ => return Ok(()),
     };
 
-    // Authorize before the client can touch the lobby. The role stays with the
-    // connection for its lifetime — every later message is implicitly this
-    // identity; the admin surface below is gated on it.
-    let role = match auth.verify(&credential).await {
-        Ok(identity) => {
-            println!("authorized ({})", identity.label);
-            identity.role
-        }
+    // Authorize (log in or register) before the client can touch the lobby.
+    match auth.verify(&credential).await {
+        Ok(identity) => println!("authorized ({})", identity.label),
         Err(e) => {
             let _ = outbox
                 .send(ServerMsg::Error {
@@ -192,7 +206,7 @@ async fn relay(
                 .await;
             return Ok(());
         }
-    };
+    }
 
     let (reply_tx, reply_rx) = oneshot::channel();
     if lobby_tx
@@ -223,91 +237,22 @@ async fn relay(
             eprintln!("rate-limit: message rate exceeded (player {id})");
             break;
         }
-        // Play commands are fire-and-forget; admin queries need a reply routed
-        // back to this client. A closed lobby or client channel ends the loop.
-        match msg {
-            ClientMsg::Invite { to } => {
-                if lobby_tx
-                    .send(LobbyCmd::Invite { from: id, to })
-                    .await
-                    .is_err()
-                {
-                    break;
-                }
-            }
-            ClientMsg::Accept { inviter } => {
-                let cmd = LobbyCmd::Accept {
-                    accepter: id,
-                    inviter,
-                };
-                if lobby_tx.send(cmd).await.is_err() {
-                    break;
-                }
-            }
-            ClientMsg::Decline { inviter } => {
-                let cmd = LobbyCmd::Decline {
-                    decliner: id,
-                    inviter,
-                };
-                if lobby_tx.send(cmd).await.is_err() {
-                    break;
-                }
-            }
-            ClientMsg::Game { payload } => {
-                if lobby_tx
-                    .send(LobbyCmd::Relay { from: id, payload })
-                    .await
-                    .is_err()
-                {
-                    break;
-                }
-            }
-            // RBAC: the admin surface requires an admin account (anonymous
-            // players and non-admin accounts are refused, not disconnected).
-            ClientMsg::ListPlayers
-            | ClientMsg::ListMatches
-            | ClientMsg::GetStats
-            | ClientMsg::SubscribeEvents
-                if role != Role::Admin =>
-            {
-                let _ = outbox
-                    .send(ServerMsg::Error {
-                        message: "admin only".to_string(),
-                    })
-                    .await;
-            }
-            ClientMsg::ListPlayers => {
-                let Some(players) = query(&lobby_tx, |reply| LobbyCmd::ListPlayers { reply }).await
-                else {
-                    break;
-                };
-                if outbox.send(ServerMsg::Players { players }).await.is_err() {
-                    break;
-                }
-            }
-            ClientMsg::ListMatches => {
-                let Some(matches) = query(&lobby_tx, |reply| LobbyCmd::ListMatches { reply }).await
-                else {
-                    break;
-                };
-                if outbox.send(ServerMsg::Matches { matches }).await.is_err() {
-                    break;
-                }
-            }
-            ClientMsg::GetStats => {
-                let Some(stats) = query(&lobby_tx, |reply| LobbyCmd::Stats { reply }).await else {
-                    break;
-                };
-                if outbox.send(ServerMsg::Stats { stats }).await.is_err() {
-                    break;
-                }
-            }
-            ClientMsg::SubscribeEvents => {
-                if lobby_tx.send(LobbyCmd::Subscribe { id }).await.is_err() {
-                    break;
-                }
-            }
+        // Gameplay commands are fire-and-forget; a closed channel ends the loop.
+        let cmd = match msg {
+            ClientMsg::Invite { to } => LobbyCmd::Invite { from: id, to },
+            ClientMsg::Accept { inviter } => LobbyCmd::Accept {
+                accepter: id,
+                inviter,
+            },
+            ClientMsg::Decline { inviter } => LobbyCmd::Decline {
+                decliner: id,
+                inviter,
+            },
+            ClientMsg::Game { payload } => LobbyCmd::Relay { from: id, payload },
             ClientMsg::Hello { .. } => continue, // ignore a stray second Hello
+        };
+        if lobby_tx.send(cmd).await.is_err() {
+            break;
         }
     }
 
@@ -317,7 +262,7 @@ async fn relay(
 
 /// Send the lobby a query built with `make` and await its oneshot reply.
 /// `None` if the lobby channel closed or the reply was dropped.
-async fn query<T>(
+pub(crate) async fn query<T>(
     lobby_tx: &mpsc::Sender<LobbyCmd>,
     make: impl FnOnce(oneshot::Sender<T>) -> LobbyCmd,
 ) -> Option<T> {
@@ -365,7 +310,7 @@ async fn next_client(source: &mut WsSource) -> Option<ClientMsg> {
 }
 
 /// A `200 OK` JSON response.
-fn json_ok(body: String) -> Response<Full<Bytes>> {
+pub(crate) fn json_ok(body: String) -> Response<Full<Bytes>> {
     Response::builder()
         .status(StatusCode::OK)
         .header(hyper::header::CONTENT_TYPE, "application/json")
@@ -374,7 +319,7 @@ fn json_ok(body: String) -> Response<Full<Bytes>> {
 }
 
 /// A plain-text response with `status`.
-fn text(status: StatusCode, msg: &'static str) -> Response<Full<Bytes>> {
+pub(crate) fn text(status: StatusCode, msg: &'static str) -> Response<Full<Bytes>> {
     Response::builder()
         .status(status)
         .header(hyper::header::CONTENT_TYPE, "text/plain")

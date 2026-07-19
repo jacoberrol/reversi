@@ -8,8 +8,7 @@ license.workspace = true
 # messages opaquely. Uses tokio; depends on `netplay-protocol` only — no game
 # logic, so any 2-player turn-based game can use it as-is.
 [dependencies]
-# `schema` pulls in schemars for the self-describing `/schema` endpoint.
-netplay-protocol = { workspace = true, features = ["schema"] }
+netplay-protocol.workspace = true
 tokio.workspace = true
 # Opaque credentials are arbitrary JSON the authenticator interprets.
 serde.workspace = true
@@ -35,6 +34,8 @@ sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio",
 # Account passwords are argon2id-hashed (pure Rust → musl-clean; salt embedded).
 # `std` pulls in getrandom so `OsRng` is available for salt generation.
 argon2 = { version = "0.5", features = ["std"] }
+# sha256 for hashing high-entropy admin session bearer tokens.
+sha2 = "0.10"
 # Authorizing an account needs an async DB lookup, so the Authenticator trait is
 # async; async-trait makes it work behind `Arc<dyn Authenticator>`.
 async-trait = "0.1"

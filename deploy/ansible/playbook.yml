@@ -5,8 +5,9 @@
 # x86_64-unknown-linux-musl binary (so the VM needs no toolchain) and passes
 # its path as `netplay_binary_src`; the NETPLAY_ADMIN secret is read from the
 # runner's environment while rendering the env file. TLS is terminated by the
-# exe.dev proxy, which forwards wss://relay.netplay.oliverj.network to
-# 127.0.0.1:8000 on this host.
+# exe.dev proxy, which forwards both relay.netplay.oliverj.network (game WS) and
+# admin.netplay.oliverj.network (REST admin) to 127.0.0.1:8000 on this host; the
+# server routes on X-Forwarded-Host.
 - name: Deploy netplay relay server
   hosts: netplay
   become: true
@@ -18,6 +19,8 @@
     netplay_env_file: /etc/netplay/netplay.env
     # systemd's StateDirectory=netplay resolves to /var/lib/netplay.
     netplay_db: /var/lib/netplay/netplay.db
+    # Host the REST admin API answers on (via the proxy's X-Forwarded-Host).
+    netplay_admin_host: admin.netplay.oliverj.network
     # netplay_binary_src is supplied by CI via --extra-vars.
 
   tasks:

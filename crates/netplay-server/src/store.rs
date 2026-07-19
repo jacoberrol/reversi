@@ -103,20 +103,20 @@ pub async fn upsert_admin(
     Ok(())
 }
 
-/// Verify an account login, returning its [`Role`] on success (or `None` for an
-/// unknown name or wrong password). The argon2 verify runs on a blocking thread
-/// so it never stalls the async runtime.
+/// Verify an account login, returning its `(id, role)` on success (or `None` for
+/// an unknown name or wrong password). The argon2 verify runs on a blocking
+/// thread so it never stalls the async runtime.
 pub async fn verify_account(
     pool: &SqlitePool,
     name: &str,
     password: &str,
-) -> Result<Option<Role>, sqlx::Error> {
-    let row: Option<(String, String)> =
-        sqlx::query_as("SELECT password_hash, role FROM users WHERE name = ?")
+) -> Result<Option<(i64, Role)>, sqlx::Error> {
+    let row: Option<(i64, String, String)> =
+        sqlx::query_as("SELECT id, password_hash, role FROM users WHERE name = ?")
             .bind(name)
             .fetch_optional(pool)
             .await?;
-    let Some((hash, role)) = row else {
+    let Some((id, hash, role)) = row else {
         return Ok(None);
     };
     let password = password.to_string();
@@ -133,7 +133,72 @@ pub async fn verify_account(
     })
     .await
     .unwrap_or(false);
-    Ok(verified.then(|| Role::from_db(&role)))
+    Ok(verified.then(|| (id, Role::from_db(&role))))
+}
+
+/// A random high-entropy bearer token (hex).
+fn random_token() -> String {
+    use argon2::password_hash::rand_core::{OsRng, RngCore};
+    let mut bytes = [0u8; 32];
+    OsRng.fill_bytes(&mut bytes);
+    to_hex(&bytes)
+}
+
+/// Lowercase-hex a byte slice.
+fn to_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    bytes.iter().fold(String::new(), |mut s, b| {
+        let _ = write!(s, "{b:02x}");
+        s
+    })
+}
+
+/// sha256 hex of a string (for hashing high-entropy session tokens at rest).
+fn sha256_hex(s: &str) -> String {
+    use sha2::{Digest, Sha256};
+    to_hex(&Sha256::digest(s.as_bytes()))
+}
+
+/// Create an admin session valid for `ttl_hours`, returning the raw bearer token
+/// (only its sha256 is stored).
+pub async fn create_session(
+    pool: &SqlitePool,
+    user_id: i64,
+    role: Role,
+    ttl_hours: i64,
+) -> Result<String, sqlx::Error> {
+    let token = random_token();
+    let role_str = if role == Role::Admin {
+        "admin"
+    } else {
+        "player"
+    };
+    sqlx::query(
+        "INSERT INTO sessions (token_hash, user_id, role, expires_at) \
+         VALUES (?, ?, ?, datetime('now', ?))",
+    )
+    .bind(sha256_hex(&token))
+    .bind(user_id)
+    .bind(role_str)
+    .bind(format!("{ttl_hours:+} hours"))
+    .execute(pool)
+    .await?;
+    Ok(token)
+}
+
+/// The role a bearer token authorizes, or `None` if unknown/expired. Prunes
+/// expired sessions lazily.
+pub async fn session_role(pool: &SqlitePool, token: &str) -> Result<Option<Role>, sqlx::Error> {
+    let _ = sqlx::query("DELETE FROM sessions WHERE expires_at <= datetime('now')")
+        .execute(pool)
+        .await;
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT role FROM sessions WHERE token_hash = ? AND expires_at > datetime('now')",
+    )
+    .bind(sha256_hex(token))
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|(role,)| Role::from_db(&role)))
 }
 
 #[cfg(test)]
@@ -160,8 +225,9 @@ mod tests {
         upsert_admin(&pool, "root", "s3cret").await.unwrap();
         assert_eq!(user_count(&pool).await.unwrap(), 1);
 
+        let role = |o: Option<(i64, Role)>| o.map(|(_, r)| r);
         assert_eq!(
-            verify_account(&pool, "root", "s3cret").await.unwrap(),
+            role(verify_account(&pool, "root", "s3cret").await.unwrap()),
             Some(Role::Admin)
         );
         assert_eq!(verify_account(&pool, "root", "wrong").await.unwrap(), None);
@@ -174,7 +240,7 @@ mod tests {
         upsert_admin(&pool, "root", "newpass").await.unwrap();
         assert_eq!(user_count(&pool).await.unwrap(), 1);
         assert_eq!(
-            verify_account(&pool, "root", "newpass").await.unwrap(),
+            role(verify_account(&pool, "root", "newpass").await.unwrap()),
             Some(Role::Admin)
         );
     }
@@ -182,10 +248,13 @@ mod tests {
     #[tokio::test]
     async fn create_account_registers_a_player_and_rejects_duplicates() {
         let (pool, _dir) = temp_pool().await;
-        let role = create_account(&pool, "alice", "password").await.unwrap();
-        assert_eq!(role, Role::Player);
+        let created = create_account(&pool, "alice", "password").await.unwrap();
+        assert_eq!(created, Role::Player);
         assert_eq!(
-            verify_account(&pool, "alice", "password").await.unwrap(),
+            verify_account(&pool, "alice", "password")
+                .await
+                .unwrap()
+                .map(|(_, r)| r),
             Some(Role::Player)
         );
         // The name is taken now.
@@ -193,5 +262,26 @@ mod tests {
             create_account(&pool, "alice", "other").await,
             Err(CreateError::NameTaken)
         ));
+    }
+
+    #[tokio::test]
+    async fn sessions_authorize_until_they_expire() {
+        let (pool, _dir) = temp_pool().await;
+        upsert_admin(&pool, "root", "s3cret").await.unwrap();
+        let (id, role) = verify_account(&pool, "root", "s3cret")
+            .await
+            .unwrap()
+            .unwrap();
+
+        let token = create_session(&pool, id, role, 24).await.unwrap();
+        assert_eq!(
+            session_role(&pool, &token).await.unwrap(),
+            Some(Role::Admin)
+        );
+        assert_eq!(session_role(&pool, "not-a-token").await.unwrap(), None);
+
+        // An already-expired session is not honored (and gets pruned).
+        let expired = create_session(&pool, id, role, -1).await.unwrap();
+        assert_eq!(session_role(&pool, &expired).await.unwrap(), None);
     }
 }

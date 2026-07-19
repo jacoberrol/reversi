@@ -16,6 +16,8 @@ EnvironmentFile={{ netplay_env_file }}
 # ProtectSystem=strict) and the server keeps its SQLite database there.
 StateDirectory=netplay
 Environment=NETPLAY_DB={{ netplay_db }}
+# Requests with this Host (via the proxy's X-Forwarded-Host) hit the REST admin API.
+Environment=NETPLAY_ADMIN_HOST={{ netplay_admin_host }}
 Restart=on-failure
 RestartSec=2
 
