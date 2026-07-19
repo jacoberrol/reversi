@@ -216,12 +216,10 @@ impl Session {
                     self.screen = Screen::Lobby;
                 }
                 NetEvent::Error(message) => self.login_error(message),
-                NetEvent::Disconnected => {
-                    // The server sends an Error then closes; don't let the
-                    // trailing disconnect clobber a real auth message.
-                    if self.login.connecting {
-                        self.login_error("could not connect".to_string());
-                    }
+                // The server sends an Error then closes; only treat a disconnect
+                // as the failure if no Error already arrived (still connecting).
+                NetEvent::Disconnected if self.login.connecting => {
+                    self.login_error("could not connect".to_string());
                 }
                 _ => {} // no other events before the lobby
             }
