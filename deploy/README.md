@@ -61,16 +61,21 @@ built-in dev token stops working, so clients must present a matching token
 
 The client reads its credential from the `NETPLAY_TOKEN` env var (a single
 `id:token`), falling back to the dev token when unset. The real secret is never
-baked into the binary — you supply it at runtime:
+baked into the binary — you supply it at runtime. On macOS, store it once in
+the login Keychain and let `just online` fetch it:
 
 ```sh
-export NETPLAY_TOKEN=2:9f3c…   # the same id:token you put in NETPLAY_TOKENS
-just online <name>
+just set-token          # prompts for the id:token (no echo); stores it in Keychain
+just online <name>      # reads NETPLAY_TOKEN from the Keychain automatically
 ```
 
-Share that value out-of-band with anyone you want to let in. This is a
-deterrence gate (a distributed client can't keep a secret); real
-per-device attestation is a later stage.
+`just online` prefers an already-exported `NETPLAY_TOKEN`, then the Keychain,
+then the dev default — so `export NETPLAY_TOKEN=2:…` still works as a one-off
+override (and is the portable option on non-macOS).
+
+Share the token out-of-band with anyone you want to let in. This is a
+deterrence gate (a distributed client can't keep a secret); real per-device
+attestation is a later stage.
 
 ## Triggering a deploy
 
