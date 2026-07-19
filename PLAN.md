@@ -196,6 +196,12 @@ token format (plain versioned random over TLS is likely enough); where the per-I
 (standalone type vs. folded into the lobby actor).
 
 ## Backlog / future (post-Stage 7) 🔮
+- 🔮 **Admin RBAC** — role-based authorization for the admin/control messages that will ride the public
+  relay (alongside the player messages, same serde/WebSocket transport). During development any
+  authenticated connection may invoke admin ops; **before non-dev use** this must be gated: a distinct
+  admin credential (not the shared player token), a role on the auth seam's `Identity`, an admin-only
+  dispatch check, and admin connections exempt from the lobby cap / `Presence`. Deferred deliberately —
+  not needed while under dev. See DESIGN §9 (auth seam) and the honest "a client can't keep a secret" note.
 - 🔮 **Search: move ordering** in alpha-beta (try corners / high-mobility / previous-best moves first, or
   order by a shallow pass). Better ordering ⇒ far more pruning ⇒ effectively deeper search at the same cost.
 - 🔮 **Search: exact endgame solver** — once ≤ ~14–16 empties remain, search to the end on exact disc
