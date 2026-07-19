@@ -6,6 +6,7 @@ use egui::{Color32, Frame, Key, Margin, RichText, Rounding};
 const SUBTLE: Color32 = Color32::from_rgb(150, 160, 176);
 const CARD: Color32 = Color32::from_rgb(26, 31, 40);
 const ERROR: Color32 = Color32::from_rgb(224, 108, 108);
+const ACCENT: Color32 = Color32::from_rgb(96, 156, 230);
 
 /// Editable login form state.
 #[derive(Default)]
@@ -44,7 +45,7 @@ pub fn ui(ctx: &egui::Context, form: &mut LoginForm, actions: &mut Vec<LoginActi
                     let name = ui.add(
                         egui::TextEdit::singleline(&mut form.name)
                             .desired_width(f32::INFINITY)
-                            .hint_text("username"),
+                            .hint_text(RichText::new("username").color(SUBTLE)),
                     );
                     ui.add_space(10.0);
 
@@ -53,7 +54,7 @@ pub fn ui(ctx: &egui::Context, form: &mut LoginForm, actions: &mut Vec<LoginActi
                         egui::TextEdit::singleline(&mut form.password)
                             .password(true)
                             .desired_width(f32::INFINITY)
-                            .hint_text("password"),
+                            .hint_text(RichText::new("password").color(SUBTLE)),
                     );
 
                     // Enter in either field acts as Log in.
@@ -65,21 +66,30 @@ pub fn ui(ctx: &egui::Context, form: &mut LoginForm, actions: &mut Vec<LoginActi
                         ui.label(RichText::new(err).color(ERROR).size(14.0));
                     }
 
-                    ui.add_space(16.0);
-                    ui.add_enabled_ui(!form.connecting, |ui| {
-                        ui.horizontal(|ui| {
-                            if ui.button("Log in").clicked() || (enter && !form.connecting) {
+                    ui.add_space(18.0);
+                    ui.vertical_centered(|ui| {
+                        ui.add_enabled_ui(!form.connecting, |ui| {
+                            let login = ui.add(
+                                egui::Button::new("Log in").min_size(egui::vec2(160.0, 38.0)),
+                            );
+                            if login.clicked() || (enter && !form.connecting) {
                                 actions.push(LoginAction::Submit { register: false });
                             }
-                            if ui.button("Create account").clicked() {
+                            ui.add_space(12.0);
+                            if ui
+                                .link(RichText::new("create a new account").color(ACCENT))
+                                .clicked()
+                            {
                                 actions.push(LoginAction::Submit { register: true });
                             }
                         });
                     });
 
                     if form.connecting {
-                        ui.add_space(8.0);
-                        ui.label(RichText::new("Connecting\u{2026}").color(SUBTLE));
+                        ui.add_space(10.0);
+                        ui.vertical_centered(|ui| {
+                            ui.label(RichText::new("Connecting\u{2026}").color(SUBTLE));
+                        });
                     }
                 });
         });

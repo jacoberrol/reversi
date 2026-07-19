@@ -54,13 +54,8 @@ fn main() {
     app::lobby::apply_theme(&ctx);
     ctx.set_pixels_per_point(PPP);
 
-    // A representative state: filled fields plus an error, to exercise everything.
-    let mut form = LoginForm {
-        name: "alice".to_string(),
-        password: "hunter2".to_string(),
-        error: Some("that name is taken".to_string()),
-        connecting: false,
-    };
+    // The initial state: empty fields show the grey "username"/"password" hints.
+    let mut form = LoginForm::default();
     let mut actions: Vec<LoginAction> = Vec::new();
 
     let raw = egui::RawInput {
