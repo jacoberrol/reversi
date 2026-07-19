@@ -170,16 +170,13 @@ async fn io_loop(
 fn forward(proxy: &EventLoopProxy<NetEvent>, bytes: &[u8]) -> bool {
     let event = match netplay_protocol::decode::<ServerMsg>(bytes) {
         Ok(msg) => server_msg_to_event(msg),
-        Err(_) => Some(NetEvent::Error("malformed message from server".to_string())),
+        Err(_) => NetEvent::Error("malformed message from server".to_string()),
     };
-    match event {
-        Some(event) => proxy.send_event(event).is_ok(),
-        None => true, // nothing to surface; keep the network thread alive
-    }
+    proxy.send_event(event).is_ok()
 }
 
-fn server_msg_to_event(msg: ServerMsg) -> Option<NetEvent> {
-    Some(match msg {
+fn server_msg_to_event(msg: ServerMsg) -> NetEvent {
+    match msg {
         ServerMsg::Presence { players } => NetEvent::Presence(players),
         ServerMsg::Invited { from, name } => NetEvent::Invited { from, name },
         ServerMsg::InviteDeclined { by } => NetEvent::InviteDeclined { by },
@@ -187,14 +184,7 @@ fn server_msg_to_event(msg: ServerMsg) -> Option<NetEvent> {
         ServerMsg::Game { payload } => NetEvent::Game(payload),
         ServerMsg::OpponentLeft => NetEvent::OpponentLeft,
         ServerMsg::Error { message } => NetEvent::Error(message),
-        // Admin/control messages are for admin tools, not the game client.
-        ServerMsg::Players { .. }
-        | ServerMsg::Matches { .. }
-        | ServerMsg::Stats { .. }
-        | ServerMsg::PlayerJoined { .. }
-        | ServerMsg::PlayerLeft { .. }
-        | ServerMsg::MatchStarted { .. } => return None,
-    })
+    }
 }
 
 #[cfg(test)]

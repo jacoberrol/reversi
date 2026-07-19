@@ -98,7 +98,7 @@ impl Authenticator for DbAuth {
             }
         } else {
             match store::verify_account(&self.pool, &account.name, &account.password).await {
-                Ok(Some(role)) => Ok(Identity { role, label }),
+                Ok(Some((_, role))) => Ok(Identity { role, label }),
                 Ok(None) => Err(AuthError::BadLogin),
                 Err(_) => Err(AuthError::Malformed),
             }

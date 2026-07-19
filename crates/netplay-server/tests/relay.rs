@@ -1,13 +1,12 @@
-//! End-to-end lobby test over WebSocket: a real server on an ephemeral port, two
-//! WebSocket clients that see each other, invite/accept, exchange opaque payloads
-//! through the relay, and see a disconnect notification. No GUI, runs in CI.
+//! End-to-end tests: a real server on an ephemeral port. The **game** rides the
+//! WebSocket (register/login → lobby → invite/accept → relay). The **admin** REST
+//! API rides plain HTTP on the admin host (login → bearer → read endpoints). No
+//! GUI; runs in CI.
 
 use std::net::SocketAddr;
-use std::sync::Arc;
 
 use futures_util::{SinkExt, StreamExt};
-use netplay_protocol::{ClientMsg, Seat, ServerMsg, PROTOCOL_VERSION};
-use netplay_server::auth::DbAuth;
+use netplay_protocol::{ClientMsg, PlayerInfo, Seat, ServerMsg, ServerStats, PROTOCOL_VERSION};
 use netplay_server::store;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -16,41 +15,45 @@ use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 
 type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
-/// Credential that registers a new account.
+/// The admin host the test server routes REST traffic for.
+const ADMIN_HOST: &str = "admin.test";
+
+/// Credential that registers a new account over the game WebSocket.
 fn register(name: &str, password: &str) -> serde_json::Value {
     serde_json::json!({ "name": name, "password": password, "register": true })
-}
-
-/// Credential that logs into an existing account.
-fn login(name: &str, password: &str) -> serde_json::Value {
-    serde_json::json!({ "name": name, "password": password })
 }
 
 /// An accounts-only server on an ephemeral port. Returns the address and the
 /// temp dir (kept alive by the caller so the SQLite file outlives the test).
 async fn start_server() -> (SocketAddr, tempfile::TempDir) {
-    let dir = tempfile::tempdir().unwrap();
-    let db = dir.path().join("test.db");
-    let pool = store::open(db.to_str().unwrap()).await.unwrap();
-    let auth = Arc::new(DbAuth::new(pool));
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(netplay_server::serve(listener, auth));
+    let (addr, _pool, dir) = spawn(false).await;
     (addr, dir)
 }
 
-/// Like [`start_server`], plus a seeded admin. Also returns the admin login.
-async fn start_server_with_admin() -> (SocketAddr, serde_json::Value, tempfile::TempDir) {
+/// Like [`start_server`], plus a seeded admin (`root` / `s3cret`).
+async fn start_server_with_admin() -> (SocketAddr, tempfile::TempDir) {
+    let (addr, _pool, dir) = spawn(true).await;
+    (addr, dir)
+}
+
+async fn spawn(with_admin: bool) -> (SocketAddr, sqlx::SqlitePool, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("test.db");
     let pool = store::open(db.to_str().unwrap()).await.unwrap();
-    store::upsert_admin(&pool, "root", "s3cret").await.unwrap();
-    let auth = Arc::new(DbAuth::new(pool));
+    if with_admin {
+        store::upsert_admin(&pool, "root", "s3cret").await.unwrap();
+    }
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    tokio::spawn(netplay_server::serve(listener, auth));
-    (addr, login("root", "s3cret"), dir)
+    tokio::spawn(netplay_server::serve(
+        listener,
+        pool.clone(),
+        ADMIN_HOST.to_string(),
+    ));
+    (addr, pool, dir)
 }
+
+// --- game (WebSocket) helpers ------------------------------------------------
 
 async fn connect_ws(addr: SocketAddr, name: &str, credential: serde_json::Value) -> Ws {
     let (mut ws, _) = connect_async(format!("ws://{addr}"))
@@ -94,14 +97,52 @@ async fn expect_matched(ws: &mut Ws) -> Seat {
     }
 }
 
+// --- admin (HTTP) helpers ----------------------------------------------------
+
+/// Send a raw HTTP/1.1 request (Connection: close) and return the full response.
+async fn http(addr: SocketAddr, request: &str) -> String {
+    let mut stream = TcpStream::connect(addr).await.unwrap();
+    stream.write_all(request.as_bytes()).await.unwrap();
+    let mut raw = Vec::new();
+    stream.read_to_end(&mut raw).await.unwrap();
+    String::from_utf8_lossy(&raw).into_owned()
+}
+
+fn get(path: &str, bearer: Option<&str>) -> String {
+    let auth = bearer
+        .map(|t| format!("Authorization: Bearer {t}\r\n"))
+        .unwrap_or_default();
+    format!("GET {path} HTTP/1.1\r\nHost: {ADMIN_HOST}\r\n{auth}Connection: close\r\n\r\n")
+}
+
+fn post(path: &str, body: &str) -> String {
+    format!(
+        "POST {path} HTTP/1.1\r\nHost: {ADMIN_HOST}\r\nContent-Type: application/json\r\n\
+         Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
+}
+
+fn body_of(response: &str) -> &str {
+    response
+        .split_once("\r\n\r\n")
+        .map(|(_, b)| b)
+        .unwrap_or("")
+}
+
+#[derive(serde::Deserialize)]
+struct TokenResp {
+    token: String,
+}
+
+// --- tests -------------------------------------------------------------------
+
 #[tokio::test]
 async fn invite_accept_relays_and_reports_disconnect() {
     let (addr, _dir) = start_server().await;
     let mut alice = connect_ws(addr, "Alice", register("Alice", "password")).await;
     let mut bob = connect_ws(addr, "Bob", register("Bob", "password")).await;
 
-    // Alice sees Bob in a presence list (skipping any empty one that arrived
-    // before Bob connected).
     let bob_id = loop {
         if let ServerMsg::Presence { players } = recv(&mut alice).await {
             if let Some(player) = players.first() {
@@ -110,7 +151,6 @@ async fn invite_accept_relays_and_reports_disconnect() {
         }
     };
 
-    // Alice invites Bob; Bob learns who invited him.
     send(&mut alice, ClientMsg::Invite { to: bob_id }).await;
     let alice_id = loop {
         if let ServerMsg::Invited { from, .. } = recv(&mut bob).await {
@@ -118,7 +158,6 @@ async fn invite_accept_relays_and_reports_disconnect() {
         }
     };
 
-    // Bob accepts; both are matched with different seats.
     send(&mut bob, ClientMsg::Accept { inviter: alice_id }).await;
     let a_seat = expect_matched(&mut alice).await;
     let b_seat = expect_matched(&mut bob).await;
@@ -157,189 +196,84 @@ async fn rejects_a_bad_credential() {
 async fn registration_login_and_their_failures() {
     let (addr, _dir) = start_server().await;
 
-    // Register → joins the lobby (a presence list arrives).
     let mut dave = connect_ws(addr, "Dave", register("Dave", "password")).await;
     assert!(matches!(recv(&mut dave).await, ServerMsg::Presence { .. }));
 
-    // A taken name, a too-short password, and a wrong login are all refused.
     let mut dupe = connect_ws(addr, "Dave", register("Dave", "different")).await;
     assert!(matches!(recv(&mut dupe).await, ServerMsg::Error { .. }));
 
     let mut weak = connect_ws(addr, "Eve", register("Eve", "short")).await;
     assert!(matches!(recv(&mut weak).await, ServerMsg::Error { .. }));
 
-    let mut wrong = connect_ws(addr, "Dave", login("Dave", "nope")).await;
-    assert!(matches!(recv(&mut wrong).await, ServerMsg::Error { .. }));
-
-    // The right password logs in.
-    let mut relog = connect_ws(addr, "Dave", login("Dave", "password")).await;
+    // Log in with the registered password (register omitted).
+    let login = serde_json::json!({ "name": "Dave", "password": "password" });
+    let mut relog = connect_ws(addr, "Dave", login).await;
     assert!(matches!(recv(&mut relog).await, ServerMsg::Presence { .. }));
 }
 
 #[tokio::test]
-async fn admin_queries_report_players_matches_and_stats() {
-    let (addr, admin_cred, _dir) = start_server_with_admin().await;
+async fn admin_rest_login_then_reads_lobby_state() {
+    let (addr, _dir) = start_server_with_admin().await;
+
+    // Two players join over the game WebSocket.
     let mut alice = connect_ws(addr, "Alice", register("Alice", "password")).await;
-    let mut bob = connect_ws(addr, "Bob", register("Bob", "password")).await;
-
-    // Match Alice (seat 0, the inviter) and Bob (seat 1).
-    let bob_id = loop {
-        if let ServerMsg::Presence { players } = recv(&mut alice).await {
-            if let Some(p) = players.first() {
-                break p.id;
-            }
-        }
-    };
-    send(&mut alice, ClientMsg::Invite { to: bob_id }).await;
-    let alice_id = loop {
-        if let ServerMsg::Invited { from, .. } = recv(&mut bob).await {
-            break from;
-        }
-    };
-    send(&mut bob, ClientMsg::Accept { inviter: alice_id }).await;
-    expect_matched(&mut alice).await;
-    expect_matched(&mut bob).await;
-
-    // A third connection queries the relay's admin surface (authorized as admin).
-    let mut admin = connect_ws(addr, "admin", admin_cred).await;
-
-    send(&mut admin, ClientMsg::ListPlayers).await;
-    let players = loop {
-        if let ServerMsg::Players { players } = recv(&mut admin).await {
-            break players;
-        }
-    };
-    assert_eq!(players.len(), 3, "alice, bob, admin");
-
-    send(&mut admin, ClientMsg::ListMatches).await;
-    let matches = loop {
-        if let ServerMsg::Matches { matches } = recv(&mut admin).await {
-            break matches;
-        }
-    };
-    assert_eq!(matches.len(), 1);
-    assert_eq!(matches[0].seat0.name, "Alice", "the inviter is seat 0");
-    assert_eq!(matches[0].seat1.name, "Bob");
-
-    send(&mut admin, ClientMsg::GetStats).await;
-    let stats = loop {
-        if let ServerMsg::Stats { stats } = recv(&mut admin).await {
-            break stats;
-        }
-    };
-    assert_eq!(stats.players_online, 3);
-    assert_eq!(stats.matches_active, 1);
-}
-
-#[tokio::test]
-async fn non_admin_is_refused_the_admin_surface() {
-    let (addr, _admin_cred, _dir) = start_server_with_admin().await;
-    // A registered player (role Player, not admin).
-    let mut player = connect_ws(addr, "Randy", register("Randy", "password")).await;
-    send(&mut player, ClientMsg::ListPlayers).await;
-    // Gets an error, never a Players reply.
-    let reply = loop {
-        match recv(&mut player).await {
-            ServerMsg::Presence { .. } => continue,
-            other => break other,
-        }
-    };
-    assert!(matches!(reply, ServerMsg::Error { .. }));
-}
-
-#[tokio::test]
-async fn admin_subscription_streams_live_events() {
-    let (addr, admin_cred, _dir) = start_server_with_admin().await;
-    let mut admin = connect_ws(addr, "admin", admin_cred).await;
-    send(&mut admin, ClientMsg::SubscribeEvents).await;
-    // Round-trip a query so the subscription is registered before anyone joins;
-    // the lobby processes this connection's messages in order, so a reply here
-    // proves the Subscribe landed (avoids racing the first PlayerJoined).
-    send(&mut admin, ClientMsg::ListPlayers).await;
+    let _bob = connect_ws(addr, "Bob", register("Bob", "password")).await;
     loop {
-        if let ServerMsg::Players { .. } = recv(&mut admin).await {
-            break;
+        if let ServerMsg::Presence { players } = recv(&mut alice).await {
+            if players.iter().any(|p| p.name == "Bob") {
+                break;
+            }
         }
     }
 
-    // A join is pushed to the subscriber (with the new player's id).
-    let mut alice = connect_ws(addr, "Alice", register("Alice", "password")).await;
-    let alice_id = loop {
-        if let ServerMsg::PlayerJoined { player } = recv(&mut admin).await {
-            if player.name == "Alice" {
-                break player.id;
-            }
-        }
-    };
-    let mut bob = connect_ws(addr, "Bob", register("Bob", "password")).await;
-    let bob_id = loop {
-        if let ServerMsg::PlayerJoined { player } = recv(&mut admin).await {
-            if player.name == "Bob" {
-                break player.id;
-            }
-        }
-    };
+    // Without a bearer token the read endpoints are refused.
+    let r = http(addr, &get("/admin/players", None)).await;
+    assert!(r.starts_with("HTTP/1.1 401"), "{}", first_line(&r));
 
-    // Pairing them is pushed as MatchStarted (Alice, the inviter, is seat 0).
-    send(&mut alice, ClientMsg::Invite { to: bob_id }).await;
-    send(&mut bob, ClientMsg::Accept { inviter: alice_id }).await;
-    let pairing = loop {
-        if let ServerMsg::MatchStarted { pairing } = recv(&mut admin).await {
-            break pairing;
-        }
-    };
-    assert_eq!(pairing.seat0.name, "Alice");
-    assert_eq!(pairing.seat1.name, "Bob");
+    // Log in for a bearer token.
+    let r = http(
+        addr,
+        &post("/admin/login", r#"{"name":"root","password":"s3cret"}"#),
+    )
+    .await;
+    assert!(r.starts_with("HTTP/1.1 200"), "{}", first_line(&r));
+    let token = serde_json::from_str::<TokenResp>(body_of(&r))
+        .unwrap()
+        .token;
 
-    // A disconnect is pushed as PlayerLeft.
-    drop(bob);
-    let left = loop {
-        if let ServerMsg::PlayerLeft { id } = recv(&mut admin).await {
-            break id;
-        }
-    };
-    assert_eq!(left, bob_id);
+    // Players and stats reflect the two connected players.
+    let r = http(addr, &get("/admin/players", Some(&token))).await;
+    assert!(r.starts_with("HTTP/1.1 200"), "{}", first_line(&r));
+    let players: Vec<PlayerInfo> = serde_json::from_str(body_of(&r)).unwrap();
+    assert_eq!(players.len(), 2);
+
+    let r = http(addr, &get("/admin/stats", Some(&token))).await;
+    let stats: ServerStats = serde_json::from_str(body_of(&r)).unwrap();
+    assert_eq!(stats.players_online, 2);
 }
 
 #[tokio::test]
-async fn schema_endpoint_serves_the_descriptor() {
-    let (addr, _dir) = start_server().await;
-    // A plain HTTP GET (no WebSocket upgrade) on the same endpoint.
-    let response = http_get(addr, "/schema").await;
-    assert!(
-        response.contains("200 OK"),
-        "expected 200, got:\n{response}"
-    );
-    assert!(response.contains("application/json"));
-    // The descriptor carries metadata and the message schemas.
-    assert!(response.contains("protocolVersion"));
-    assert!(response.contains("ClientMsg"));
-    assert!(response.contains("ServerMsg"));
+async fn admin_login_rejects_bad_password_and_non_admins() {
+    let (addr, _dir) = start_server_with_admin().await;
+
+    let r = http(
+        addr,
+        &post("/admin/login", r#"{"name":"root","password":"nope"}"#),
+    )
+    .await;
+    assert!(r.starts_with("HTTP/1.1 401"), "{}", first_line(&r));
+
+    // A registered player is not an admin → 403.
+    let mut randy = connect_ws(addr, "Randy", register("Randy", "password")).await;
+    let _ = recv(&mut randy).await; // presence
+    let r = http(
+        addr,
+        &post("/admin/login", r#"{"name":"Randy","password":"password"}"#),
+    )
+    .await;
+    assert!(r.starts_with("HTTP/1.1 403"), "{}", first_line(&r));
 }
 
-#[tokio::test]
-async fn asyncapi_endpoint_serves_the_document() {
-    let (addr, _dir) = start_server().await;
-    let response = http_get(addr, "/asyncapi.json").await;
-    assert!(
-        response.contains("200 OK"),
-        "expected 200, got:\n{response}"
-    );
-    assert!(response.contains("application/json"));
-    assert!(response.contains(r#""asyncapi":"3.0.0""#));
-    // One named message per variant (not one anonymous oneOf blob).
-    assert!(response.contains("ClientHello"));
-    assert!(response.contains("ClientInvite"));
-    assert!(response.contains("ServerMatched"));
-    assert!(response.contains("ServerPlayerJoined"));
-}
-
-/// Issue a plain HTTP/1.1 GET on the relay port and return the full raw response.
-async fn http_get(addr: SocketAddr, path: &str) -> String {
-    let mut stream = TcpStream::connect(addr).await.unwrap();
-    let request = format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
-    stream.write_all(request.as_bytes()).await.unwrap();
-    let mut raw = Vec::new();
-    stream.read_to_end(&mut raw).await.unwrap();
-    String::from_utf8_lossy(&raw).into_owned()
+fn first_line(response: &str) -> &str {
+    response.lines().next().unwrap_or("")
 }

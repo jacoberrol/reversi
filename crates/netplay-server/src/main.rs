@@ -1,17 +1,17 @@
 //! Netplay relay server binary. Binds an address and serves connections.
 //!
-//! Auth is accounts-only: clients log in (or self-register) with a name +
-//! password (argon2id), and the account's role gates the admin surface. Seed
-//! the admin with `NETPLAY_ADMIN="name:password"`.
+//! Gameplay is accounts-only WebSocket: clients log in (or self-register) with a
+//! name + password (argon2id). The admin REST API is served on `NETPLAY_ADMIN_HOST`
+//! (default `admin.netplay.oliverj.network`); seed the admin with
+//! `NETPLAY_ADMIN="name:password"`.
 //!
 //! Persistent state lives in a SQLite database at `NETPLAY_DB` (default
 //! `netplay.db`); it's created and migrated on startup.
 
-use std::sync::Arc;
-
-use netplay_server::auth::DbAuth;
 use netplay_server::store;
 use tokio::net::TcpListener;
+
+const DEFAULT_ADMIN_HOST: &str = "admin.netplay.oliverj.network";
 
 #[tokio::main]
 async fn main() {
@@ -47,11 +47,12 @@ async fn main() {
         Err(e) => eprintln!("store query failed: {e}"),
     }
 
+    let admin_host =
+        std::env::var("NETPLAY_ADMIN_HOST").unwrap_or_else(|_| DEFAULT_ADMIN_HOST.to_string());
+
     let listener = TcpListener::bind(&addr)
         .await
         .unwrap_or_else(|e| panic!("failed to bind {addr}: {e}"));
-    // Accounts-only: every connection logs in or registers.
-    let auth = Arc::new(DbAuth::new(pool));
-    println!("netplay relay listening on {addr}");
-    netplay_server::serve(listener, auth).await;
+    println!("netplay relay listening on {addr} (admin host: {admin_host})");
+    netplay_server::serve(listener, pool, admin_host).await;
 }

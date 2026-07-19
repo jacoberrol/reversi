@@ -1,17 +1,28 @@
 # Deploying the netplay relay
 
 The relay server (`netplay-server`) runs on an exe.dev VM behind the provider's
-TLS proxy. Clients connect to `wss://relay.netplay.oliverj.network`; the proxy
-terminates TLS and forwards to the plain-`ws://` server bound on
-`127.0.0.1:8000`. Deploys are **manual, via GitHub Actions** — you trigger them;
-nothing deploys on push.
+TLS proxy. Game clients connect to `wss://relay.netplay.oliverj.network`; the
+admin API lives at `https://admin.netplay.oliverj.network`. **Both hostnames
+resolve to the same IP and forward to the same server** on `127.0.0.1:8000`; the
+server routes on the requested host (the proxy passes it as `X-Forwarded-Host`):
+the admin host → REST admin API, everything else → the game WebSocket. Deploys
+are **manual, via GitHub Actions** — you trigger them; nothing deploys on push.
 
 ```
-client  --wss://relay.netplay.oliverj.network-->  exe.dev proxy (TLS)
-                                                        |  ws:// 127.0.0.1:8000
-                                                        v
-                                          netplay-server (systemd, VM)
+game client  --wss://relay.netplay.oliverj.network--\
+                                                     >  exe.dev proxy (TLS)
+admin      --https://admin.netplay.oliverj.network--/        |
+                                                             |  http/ws 127.0.0.1:8000
+                                                             v
+                                             netplay-server (systemd, VM)
+                              routes by X-Forwarded-Host: admin.* → REST, else → game WS
 ```
+
+**DNS + proxy:** add an `admin.netplay.oliverj.network` CNAME/record pointing at
+the same VM and configure the exe.dev proxy to terminate TLS for it and forward
+to the same `127.0.0.1:8000` (with `X-Forwarded-Host`). The server reads its
+admin host from `NETPLAY_ADMIN_HOST` (the unit defaults it to
+`admin.netplay.oliverj.network`).
 
 ## What the workflow does
 
@@ -53,9 +64,10 @@ user on the VM (add it in the exe.dev key UI, or append to
 
 The server seeds/rotates the admin account from `NETPLAY_ADMIN` on every boot
 (idempotent argon2id upsert), so changing the secret + `just deploy` rotates the
-admin password. The admin (e.g. the Go TUI) logs in with credential
-`{"name": "...", "password": "..."}` and is the only role allowed on the admin
-surface (`ListPlayers`/`ListMatches`/`GetStats`/`SubscribeEvents`).
+admin password. The admin (e.g. the Go TUI) authenticates against the REST API
+at `https://admin.netplay.oliverj.network`: `POST /admin/login` with
+`{"name": "...", "password": "..."}` returns a bearer token (admin role only),
+carried as `Authorization: Bearer <token>` on `GET /admin/{players,matches,stats}`.
 
 ### 3. Play
 

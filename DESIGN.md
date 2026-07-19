@@ -122,18 +122,25 @@ Rust server on a cloud VM. We build the real topology now and stage toward that.
   the protocol without matching serde's default externally-tagged encoding. This forced the
   two odd variants (`Game`, `Error`) from newtype into struct variants (`Game { payload }`,
   `Error { message }`), since internal tagging can't wrap a bare array/string. We kept JSON
-  (not protobuf): it's human-readable in logs and we own both ends, and a self-describing
-  `/schema` endpoint recovers the cross-language rigor without a binary codec.
-- **Self-describing endpoints.** The server runs a minimal `hyper` HTTP/1 front on the same port,
-  while `/` upgrades to WebSocket (`hyper-tungstenite`) and hands off to the relay. Two GETs publish
-  the contract, both generated from the Rust types via `schemars` so they can't drift:
-  - `GET /schema` — a custom descriptor (metadata + JSON Schema of every message), easiest for quick
-    Go struct codegen (quicktype / go-jsonschema).
-  - `GET /asyncapi.json` — the same protocol as a standard **AsyncAPI 3.0** document (channel +
-    send/receive operations + the message schemas). AsyncAPI, not OpenAPI: OpenAPI models HTTP
-    request/response, but our surface is WebSocket messages — AsyncAPI is the matching standard.
-  `schemars` is behind a `schema` feature the client never enables. The proxy already forwards plain
-  HTTP to the VM, so both need no proxy change.
+  (not protobuf): it's human-readable in logs and we own both ends.
+- **Control plane (REST) vs data plane (WebSocket), split by host (Stage 12).** The server runs a
+  minimal `hyper` HTTP/1 front per connection and routes on the requested hostname (the exe.dev proxy
+  forwards it as `X-Forwarded-Host`, falling back to `Host`): the admin host
+  (`admin.netplay.oliverj.network`, configurable via `NETPLAY_ADMIN_HOST`) serves the **REST admin
+  API**; every other host is the **game** — a WebSocket upgrade (`hyper-tungstenite`) handed to the
+  relay. Both hostnames resolve to the same IP:port and the proxy forwards both, so the split needs
+  no extra proxy listener. The WebSocket now carries *only* gameplay (`Hello`/`Invite`/`Accept`/
+  `Decline`/`Game` in, presence/match/game out) — no admin messages ride it.
+  - **Auth: bearer sessions.** `POST /admin/login` takes `{name, password}`, verifies the account
+    (must be an admin), and returns an opaque bearer token; later admin requests carry
+    `Authorization: Bearer <token>`. Tokens are 256-bit random, stored **sha256-hashed** in a
+    `sessions` table (never raw), with a TTL; expired rows are pruned lazily on lookup. (argon2 is
+    for the low-entropy passwords; a high-entropy token needs only a fast hash.)
+  - **Endpoints:** `GET /admin/players`, `/admin/matches`, `/admin/stats` (all bearer-guarded), and
+    `GET /admin/openapi.json` for discovery. We dropped the earlier WS-side `/schema` +
+    `/asyncapi.json` docs: with the control surface now genuinely REST, OpenAPI is the fitting
+    standard, and the gameplay wire contract is small enough to read from the `netplay-protocol`
+    types directly.
 - **The winit loop stays synchronous; networking uses a runtime off to the side.** The relay
   (`netplay-server`) uses tokio (per-connection tasks + an in-memory lobby actor). The client
   runs its WebSocket on a **single-thread tokio runtime confined to a dedicated network thread**,
@@ -217,4 +224,6 @@ screen state so a custom UI could replace it.
 - ✅ Increment 2: named presence + invite lobby (egui). Auto-match replaced by presence + invites.
 - ✅ Deploy to a cloud VM (Stage 8D): WebSocket transport + TLS-fronted relay on exe.dev.
 - ✅ Accounts + RBAC on SQLite (Stage 10): argon2id accounts; admin surface gated by role.
+- ✅ Accounts-only login/register on the title screen (Stage 11): shared token removed.
+- Admin REST control plane on its own host, bearer sessions (Stage 12): SSE events + OpenAPI to follow.
 - Out of scope for now: reconnect, spectating, NAT traversal.

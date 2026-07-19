@@ -64,15 +64,6 @@ online:
 deploy:
     gh workflow run "Deploy relay"
 
-# Fetch the relay's self-describing wire contract (JSON Schema + metadata).
-# Pretty-prints with jq if present. URL defaults to the public relay.
-schema URL="https://relay.netplay.oliverj.network":
-    curl -fsS {{URL}}/schema | { jq . 2>/dev/null || cat; }
-
-# Fetch the relay's AsyncAPI 3.0 document (the standard WebSocket message spec).
-asyncapi URL="https://relay.netplay.oliverj.network":
-    curl -fsS {{URL}}/asyncapi.json | { jq . 2>/dev/null || cat; }
-
 # Stops the server automatically when both windows close (or on Ctrl-C). Uses
 # port 5099 to avoid clashing with a manual `just serve`. Each window shows the
 # login screen — create two accounts (e.g. Alice / Bob), then invite + accept.
