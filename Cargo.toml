@@ -31,8 +31,9 @@ netplay-protocol = { path = "crates/netplay-protocol" }
 netplay-client = { path = "crates/netplay-client" }
 
 # Networking. serde encodes the wire protocol (and the app's game payload).
-# tokio is used by the server only — the client stays async-free (blocking TCP
-# on a background thread).
+# tokio drives the async WebSocket transport: multi-threaded in the server, and
+# a current-thread runtime confined to the client's network thread (the winit
+# loop stays synchronous).
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "sync", "macros", "time"] }
