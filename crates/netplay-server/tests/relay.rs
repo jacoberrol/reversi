@@ -116,9 +116,16 @@ fn get(path: &str, bearer: Option<&str>) -> String {
 }
 
 fn post(path: &str, body: &str) -> String {
+    post_auth(path, body, None)
+}
+
+fn post_auth(path: &str, body: &str, bearer: Option<&str>) -> String {
+    let auth = bearer
+        .map(|t| format!("Authorization: Bearer {t}\r\n"))
+        .unwrap_or_default();
     format!(
         "POST {path} HTTP/1.1\r\nHost: {ADMIN_HOST}\r\nContent-Type: application/json\r\n\
-         Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+         {auth}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     )
 }
@@ -133,6 +140,20 @@ fn body_of(response: &str) -> &str {
 #[derive(serde::Deserialize)]
 struct TokenResp {
     token: String,
+    expires_in_hours: i64,
+}
+
+/// Log in as the seeded admin (`root`/`s3cret`) and return the bearer token.
+async fn admin_login(addr: SocketAddr) -> String {
+    let r = http(
+        addr,
+        &post("/admin/login", r#"{"name":"root","password":"s3cret"}"#),
+    )
+    .await;
+    assert!(r.starts_with("HTTP/1.1 200"), "{}", first_line(&r));
+    serde_json::from_str::<TokenResp>(body_of(&r))
+        .unwrap()
+        .token
 }
 
 // --- tests -------------------------------------------------------------------
@@ -272,6 +293,35 @@ async fn admin_login_rejects_bad_password_and_non_admins() {
     )
     .await;
     assert!(r.starts_with("HTTP/1.1 403"), "{}", first_line(&r));
+}
+
+#[tokio::test]
+async fn admin_durable_token_is_minted_from_a_bearer_and_authorizes() {
+    let (addr, _dir) = start_server_with_admin().await;
+    let login = admin_login(addr).await;
+
+    // Trade the login session for a durable token of a chosen lifetime.
+    let r = http(
+        addr,
+        &post_auth("/admin/tokens", r#"{"days":14}"#, Some(&login)),
+    )
+    .await;
+    assert!(r.starts_with("HTTP/1.1 200"), "{}", first_line(&r));
+    let durable: TokenResp = serde_json::from_str(body_of(&r)).unwrap();
+    assert_eq!(durable.expires_in_hours, 14 * 24);
+    assert_ne!(durable.token, login, "a distinct token is issued");
+
+    // The durable token authorizes the read endpoints on its own.
+    let r = http(addr, &get("/admin/stats", Some(&durable.token))).await;
+    assert!(r.starts_with("HTTP/1.1 200"), "{}", first_line(&r));
+
+    // An empty body takes the default lifetime; no bearer is refused.
+    let r = http(addr, &post_auth("/admin/tokens", "", Some(&login))).await;
+    let defaulted: TokenResp = serde_json::from_str(body_of(&r)).unwrap();
+    assert_eq!(defaulted.expires_in_hours, 30 * 24);
+
+    let r = http(addr, &post_auth("/admin/tokens", r#"{"days":7}"#, None)).await;
+    assert!(r.starts_with("HTTP/1.1 401"), "{}", first_line(&r));
 }
 
 fn first_line(response: &str) -> &str {

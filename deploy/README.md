@@ -66,8 +66,11 @@ The server seeds/rotates the admin account from `NETPLAY_ADMIN` on every boot
 (idempotent argon2id upsert), so changing the secret + `just deploy` rotates the
 admin password. The admin (e.g. the Go TUI) authenticates against the REST API
 at `https://admin.netplay.oliverj.network`: `POST /admin/login` with
-`{"name": "...", "password": "..."}` returns a bearer token (admin role only),
-carried as `Authorization: Bearer <token>` on `GET /admin/{players,matches,stats}`.
+`{"name": "...", "password": "..."}` returns a short-lived (24 h) bearer token
+(admin role only), carried as `Authorization: Bearer <token>` on
+`GET /admin/{players,matches,stats}`. To avoid re-sending the password, a tool
+can trade its login token for a durable one via `POST /admin/tokens` (bearer,
+optional `{"days": N}`, default 30, max 90) and hold that across restarts.
 
 ### 3. Play
 
