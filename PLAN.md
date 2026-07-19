@@ -312,3 +312,7 @@ Record notable plan/scope changes here so the "why" survives.
   3.0** document (reuses the schemars schemas, subschemas inlined). `just asyncapi` fetches it.
   Also marked the slow eval strength test `#[ignore]` (run with `--ignored` / `just matchup`) so the
   default `cargo test`/CI run is faster.
+- 2026-07-18 — Stage 9: cleaned up the AsyncAPI doc — split the two `oneOf` blobs into **one named
+  message per variant** (`ClientHello`, `ServerMatched`, …; prefixed since `Game` is on both sides)
+  so tooling shows a real catalog instead of anonymous "any" unions, and gave the opaque `credential`
+  a *described* schema instead of a bare any.

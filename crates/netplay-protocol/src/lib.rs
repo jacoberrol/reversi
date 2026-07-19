@@ -105,6 +105,7 @@ pub enum ClientMsg {
     Hello {
         name: String,
         protocol: u16,
+        #[cfg_attr(feature = "schema", schemars(schema_with = "opaque_credential_schema"))]
         credential: serde_json::Value,
     },
     /// Invite another player (by id) to a game.
@@ -208,6 +209,51 @@ fn message_schema<T: schemars::JsonSchema>() -> serde_json::Value {
     serde_json::to_value(schema).expect("schema serializes")
 }
 
+/// Schema for the opaque `Hello.credential`: any JSON, but *described* so it
+/// renders as documentation rather than a bare "any" in tooling.
+#[cfg(feature = "schema")]
+fn opaque_credential_schema(_: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+    serde_json::from_value(serde_json::json!({
+        "description": "Opaque authorization credential — arbitrary JSON the server's \
+            authenticator interprets (the relay never inspects it). Reference token \
+            scheme: {\"key_id\": <integer>, \"token\": <string>}.",
+    }))
+    .expect("valid schema")
+}
+
+/// Split an internally-tagged enum's JSON Schema into one AsyncAPI *message* per
+/// variant, keyed `{prefix}{Variant}` (the prefix disambiguates the `Game`
+/// variant, which exists on both `ClientMsg` and `ServerMsg`).
+#[cfg(feature = "schema")]
+fn variant_messages(
+    prefix: &str,
+    schema: &serde_json::Value,
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut out = serde_json::Map::new();
+    let variants = schema.get("oneOf").and_then(serde_json::Value::as_array);
+    for variant in variants.into_iter().flatten() {
+        // The variant name is the single value of its `type` discriminator enum.
+        let name = variant
+            .get("properties")
+            .and_then(|p| p.get("type"))
+            .and_then(|t| t.get("enum"))
+            .and_then(serde_json::Value::as_array)
+            .and_then(|e| e.first())
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("Unknown");
+        out.insert(
+            format!("{prefix}{name}"),
+            serde_json::json!({
+                "name": name,
+                "title": name,
+                "contentType": "application/json",
+                "payload": variant,
+            }),
+        );
+    }
+    out
+}
+
 /// An [AsyncAPI 3.0](https://www.asyncapi.com/) document describing the relay's
 /// WebSocket message protocol — the standard, tooling-friendly spec for a
 /// message API (OpenAPI describes HTTP request/response, which this isn't).
@@ -215,7 +261,33 @@ fn message_schema<T: schemars::JsonSchema>() -> serde_json::Value {
 /// `/asyncapi.json`. Behind the `schema` feature.
 #[cfg(feature = "schema")]
 pub fn asyncapi_document() -> serde_json::Value {
-    serde_json::json!({
+    use serde_json::{json, Map, Value};
+
+    // One named message per protocol variant (client sends, server sends).
+    let client = variant_messages("Client", &message_schema::<ClientMsg>());
+    let server = variant_messages("Server", &message_schema::<ServerMsg>());
+
+    // The channel advertises every message; the operations partition by direction.
+    let channel_messages: Map<String, Value> = client
+        .keys()
+        .chain(server.keys())
+        .map(|k| {
+            (
+                k.clone(),
+                json!({ "$ref": format!("#/components/messages/{k}") }),
+            )
+        })
+        .collect();
+    let op_messages = |keys: &Map<String, Value>| -> Vec<Value> {
+        keys.keys()
+            .map(|k| json!({ "$ref": format!("#/channels/lobby/messages/{k}") }))
+            .collect()
+    };
+    let receive = op_messages(&client);
+    let send = op_messages(&server);
+    let components: Map<String, Value> = client.into_iter().chain(server).collect();
+
+    json!({
         "asyncapi": "3.0.0",
         "info": {
             "title": "Reversi netplay relay",
@@ -236,45 +308,25 @@ pub fn asyncapi_document() -> serde_json::Value {
             "lobby": {
                 "address": "/",
                 "title": "Lobby / match channel",
-                "messages": {
-                    "ClientMsg": { "$ref": "#/components/messages/ClientMsg" },
-                    "ServerMsg": { "$ref": "#/components/messages/ServerMsg" },
-                },
+                "messages": channel_messages,
             },
         },
-        // Actions are from the relay's perspective: it receives ClientMsg, sends ServerMsg.
+        // Actions are from the relay's perspective: it receives client messages, sends server ones.
         "operations": {
-            "receiveClientMsg": {
+            "receive": {
                 "action": "receive",
                 "channel": { "$ref": "#/channels/lobby" },
                 "summary": "Messages a client sends to the relay.",
-                "messages": [ { "$ref": "#/channels/lobby/messages/ClientMsg" } ],
+                "messages": receive,
             },
-            "sendServerMsg": {
+            "send": {
                 "action": "send",
                 "channel": { "$ref": "#/channels/lobby" },
                 "summary": "Messages the relay sends to a client.",
-                "messages": [ { "$ref": "#/channels/lobby/messages/ServerMsg" } ],
+                "messages": send,
             },
         },
-        "components": {
-            "messages": {
-                "ClientMsg": {
-                    "name": "ClientMsg",
-                    "title": "Client to server message",
-                    "contentType": "application/json",
-                    "schemaFormat": "application/schema+json;version=draft-07",
-                    "payload": message_schema::<ClientMsg>(),
-                },
-                "ServerMsg": {
-                    "name": "ServerMsg",
-                    "title": "Server to client message",
-                    "contentType": "application/json",
-                    "schemaFormat": "application/schema+json;version=draft-07",
-                    "payload": message_schema::<ServerMsg>(),
-                },
-            },
-        },
+        "components": { "messages": components },
     })
 }
 

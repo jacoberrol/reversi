@@ -262,8 +262,11 @@ async fn asyncapi_endpoint_serves_the_document() {
     );
     assert!(response.contains("application/json"));
     assert!(response.contains(r#""asyncapi":"3.0.0""#));
-    assert!(response.contains("ClientMsg"));
-    assert!(response.contains("ServerMsg"));
+    // One named message per variant (not one anonymous oneOf blob).
+    assert!(response.contains("ClientHello"));
+    assert!(response.contains("ClientInvite"));
+    assert!(response.contains("ServerMatched"));
+    assert!(response.contains("ServerPlayerJoined"));
 }
 
 /// Issue a plain HTTP/1.1 GET on the relay port and return the full raw response.
