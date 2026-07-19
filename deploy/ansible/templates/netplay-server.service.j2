@@ -12,10 +12,14 @@ Group={{ netplay_user }}
 # Bind loopback only: the exe.dev proxy terminates TLS and forwards to this port.
 ExecStart={{ netplay_bin }} 127.0.0.1:{{ netplay_port }}
 EnvironmentFile={{ netplay_env_file }}
+# systemd creates /var/lib/netplay (owned by the service user, writable despite
+# ProtectSystem=strict) and the server keeps its SQLite database there.
+StateDirectory=netplay
+Environment=NETPLAY_DB={{ netplay_db }}
 Restart=on-failure
 RestartSec=2
 
-# Hardening — the relay needs nothing but a TCP socket and its env file.
+# Hardening — the relay needs a TCP socket, its env file, and its state dir.
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true

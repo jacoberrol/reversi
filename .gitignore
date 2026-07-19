@@ -14,3 +14,8 @@
 
 # Rendered frames / scratch output produced by `just frame`
 /target/frame.png
+
+# Local SQLite databases (the server creates one at NETPLAY_DB, default ./netplay.db)
+netplay.db
+netplay.db-shm
+netplay.db-wal

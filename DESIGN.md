@@ -182,6 +182,28 @@ can use, split into `netplay-protocol` / `netplay-server` / `netplay-client`. Th
   over building on the VM (keeps the box minimal) and over a push-triggered deploy (production is
   hand-triggered). See `deploy/README.md`.
 
+### Persistence: SQLite for accounts (Stage 10 — the stateless-relay inflection)
+The relay was in-memory only; **durable identity is where it grows a database** (flagged as the
+biggest inflection above). We add **SQLite via `sqlx`** (async, tokio-native), holding a `users`
+table (name, `password_hash`, `role`). Account secrets are **argon2id** PHC strings (per-hash salt
+embedded — the root admin uses a human password, so a slow salted hash is required, not sha256).
+This backs **accounts + RBAC**: `Identity` gains a `role`, and
+the admin surface is gated on `role == admin` (closing the deferred RBAC item). Anonymous play stays
+— the shared token still authorizes a plain `player` with no account — so existing game clients are
+untouched; accounts are additive and only they can be admins. Decisions:
+- **`sqlx` + bundled SQLite**, not `rusqlite`/`diesel`: async fits the tokio server without
+  `spawn_blocking`, and bundling the SQLite C source keeps the static-musl deploy build free of a
+  system `libsqlite3` (musl-tools already present handles the C compile).
+- **Migrations embedded + auto-run on startup** (`sqlx::migrate!` over `migrations/`), tracked in
+  `_sqlx_migrations`, so a deploy stays one step (the server migrates itself). Runtime query API (no
+  compile-time DB), so CI needs no database.
+- **State lives in systemd's `StateDirectory=netplay`** (`/var/lib/netplay`, writable under
+  `ProtectSystem=strict`); the DB path is `NETPLAY_DB`. Since accounts are server infrastructure the
+  store is a `netplay-server` module — this does make the "reusable relay" stateful, recorded here
+  rather than left to drift.
+- Because the `Hello` credential is **opaque JSON**, moving auth from `{key_id, token}` to account
+  credentials needs no protocol/wire change — only the authenticator's interpretation changes.
+
 ### UI: egui for menus/lobby (decided)
 On-screen text and the lobby use **egui** (`egui` + `egui-wgpu`, on our wgpu 0.20). We evaluated
 hand-rolling a bitmap-font + custom widgets (fits the "build the plumbing" ethos, unstubs textures)
@@ -195,4 +217,5 @@ screen state so a custom UI could replace it.
 ### Staged
 - ✅ Increment 2: named presence + invite lobby (egui). Auto-match replaced by presence + invites.
 - ✅ Deploy to a cloud VM (Stage 8D): WebSocket transport + TLS-fronted relay on exe.dev.
-- Out of scope for now: accounts/auth, reconnect, spectating, NAT traversal.
+- ✅ Accounts + RBAC on SQLite (Stage 10): argon2id accounts; admin surface gated by role.
+- Out of scope for now: reconnect, spectating, NAT traversal.

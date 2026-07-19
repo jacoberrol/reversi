@@ -12,6 +12,7 @@ license.workspace = true
 netplay-protocol = { workspace = true, features = ["schema"] }
 tokio.workspace = true
 # Opaque credentials are arbitrary JSON the authenticator interprets.
+serde.workspace = true
 serde_json.workspace = true
 # A minimal HTTP/1 front (hyper) serves `GET /schema` and upgrades `/` to a
 # plain WebSocket (hyper-tungstenite). No TLS — the deploy proxy terminates it
@@ -26,9 +27,22 @@ bytes = "1"
 # hyper-tungstenite). We don't do the handshake ourselves — hyper does.
 tokio-tungstenite = { version = "0.30", default-features = false }
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
+# Persistent state (accounts, roles). SQLite is bundled (compiled from source),
+# so no system libsqlite3 — the static-musl deploy build needs only musl-tools.
+# Migrations are embedded at build time and run on startup; runtime query API
+# (no compile-time DB), so CI needs no database.
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros"] }
+# Account passwords are argon2id-hashed (pure Rust → musl-clean; salt embedded).
+# `std` pulls in getrandom so `OsRng` is available for salt generation.
+argon2 = { version = "0.5", features = ["std"] }
+# Authorizing an account needs an async DB lookup, so the Authenticator trait is
+# async; async-trait makes it work behind `Arc<dyn Authenticator>`.
+async-trait = "0.1"
 
 [dev-dependencies]
 # The relay test drives the server over WebSocket (same version as the runtime
 # dep, so the test build has a single `tokio_tungstenite`).
 tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "handshake"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
+# Throwaway on-disk SQLite for store tests.
+tempfile = "3"
