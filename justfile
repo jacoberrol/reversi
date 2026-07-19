@@ -37,27 +37,6 @@ serve ADDR="127.0.0.1:5000":
 play URL="ws://127.0.0.1:5000":
     cargo run -p app -- --server {{URL}}
 
-# Prompts for a token (no echo) and stores it in the macOS login Keychain.
-# Owners mint tokens with `just rotate-token` instead.
-# Store a token to JOIN a relay someone else runs.
-set-token:
-    security add-generic-password -U -a "$USER" -s netplay-token -w
-    @echo "stored 'netplay-token' in your login keychain"
-
-# Stores it in BOTH the macOS Keychain (for `just online`) and the
-# NETPLAY_TOKENS GitHub secret (for the server). KEY_ID is any small integer
-# (avoid the dev id 1). Run `just deploy` after so the server picks it up.
-# Owner: mint a fresh relay token into the Keychain + GitHub secret.
-rotate-token KEY_ID="2":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    command -v gh >/dev/null || { echo "gh CLI not found (brew install gh)"; exit 1; }
-    token="{{KEY_ID}}:$(openssl rand -hex 32)"
-    security add-generic-password -U -a "$USER" -s netplay-token -w "$token"
-    printf '%s' "$token" | gh secret set NETPLAY_TOKENS
-    echo "rotated: new token in Keychain + GitHub secret NETPLAY_TOKENS"
-    echo "next: 'just deploy' to apply it on the relay (the old token works until then)"
-
 # Prompts twice for the password (not echoed) and stores NETPLAY_ADMIN=
 # "name:password" in GitHub Secrets. The server seeds/rotates the admin on the
 # next `just deploy`. NAME can't contain a colon.
@@ -81,7 +60,7 @@ online:
     cargo run -p app -- --online
 
 # Deploy the relay to the exe.dev VM (manual GitHub Actions workflow).
-# Requires the DEPLOY_SSH_KEY and NETPLAY_TOKENS repo secrets — see deploy/README.md.
+# Requires the DEPLOY_SSH_KEY and NETPLAY_ADMIN repo secrets — see deploy/README.md.
 deploy:
     gh workflow run "Deploy relay"
 

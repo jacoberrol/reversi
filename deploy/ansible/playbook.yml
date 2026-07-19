@@ -3,7 +3,7 @@
 #
 # Invoked by .github/workflows/deploy.yml. CI builds a static
 # x86_64-unknown-linux-musl binary (so the VM needs no toolchain) and passes
-# its path as `netplay_binary_src`; the NETPLAY_TOKENS secret is read from the
+# its path as `netplay_binary_src`; the NETPLAY_ADMIN secret is read from the
 # runner's environment while rendering the env file. TLS is terminated by the
 # exe.dev proxy, which forwards wss://relay.netplay.oliverj.network to
 # 127.0.0.1:8000 on this host.

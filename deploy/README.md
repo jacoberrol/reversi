@@ -53,50 +53,16 @@ user on the VM (add it in the exe.dev key UI, or append to
 
 The server seeds/rotates the admin account from `NETPLAY_ADMIN` on every boot
 (idempotent argon2id upsert), so changing the secret + `just deploy` rotates the
-admin password. The admin (e.g. the Go TUI) then logs in with credential
+admin password. The admin (e.g. the Go TUI) logs in with credential
 `{"name": "...", "password": "..."}` and is the only role allowed on the admin
-surface (`ListPlayers`/`ListMatches`/`GetStats`/`SubscribeEvents`). Anonymous
-players use the shared token below and are refused the admin messages.
+surface (`ListPlayers`/`ListMatches`/`GetStats`/`SubscribeEvents`).
 
-(The `NETPLAY_TOKENS` secret is set for you by `just rotate-token`, next.)
+### 3. Play
 
-### 3. Mint the relay token (owner)
-
-`just rotate-token` mints a fresh high-entropy token and stores it in **both**
-places at once — your macOS login Keychain (for `just online`) and the
-`NETPLAY_TOKENS` GitHub secret (for the server):
-
-```sh
-just rotate-token        # generates 2:<random>, → Keychain + NETPLAY_TOKENS secret
-just deploy              # apply it on the running relay (see below)
-```
-
-The token format is `keyid:token` (`NETPLAY_TOKENS` accepts a comma-separated
-list of them). Once the secret is set, the server accepts **only** those keys —
-the built-in dev token stops working, so clients must present a matching token.
-Rotate any time by re-running `just rotate-token` + `just deploy`.
-
-### 4. Connect clients with the shared token
-
-The client reads its credential from the `NETPLAY_TOKEN` env var (a single
-`id:token`), falling back to the dev token when unset — the real secret is never
-baked into the binary. As the owner, `just rotate-token` already put it in your
-Keychain, so you just:
-
-```sh
-just online <name>       # reads the token from the Keychain automatically
-```
-
-Anyone you invite runs `just set-token` once (paste the token you share with
-them out-of-band), then `just online <name>`.
-
-`just online` prefers an already-exported `NETPLAY_TOKEN`, then the Keychain,
-then the dev default — so `export NETPLAY_TOKEN=2:…` still works as a one-off
-override (and is the portable option on non-macOS).
-
-Share the token out-of-band with anyone you want to let in. This is a
-deterrence gate (a distributed client can't keep a secret); real per-device
-attestation is a later stage.
+The relay is **accounts-only** with open registration — `just online` opens a
+login screen where anyone can log in or create an account. No shared token, no
+per-client setup. Regular accounts are `player` role; only the seeded admin can
+touch the admin surface.
 
 ## Triggering a deploy
 
@@ -111,7 +77,7 @@ Watch it with `gh run watch` or in the Actions tab.
 
 - **Roll back:** re-run the workflow from an earlier commit (Actions → Run
   workflow → pick the ref).
-- **Rotate tokens:** update the `NETPLAY_TOKENS` secret and re-run — the env file
-  re-renders and the service restarts.
+- **Rotate the admin password:** `just set-admin <name>` (new password) + `just
+  deploy` — the env file re-renders and the server re-upserts the admin on boot.
 - **Revoke CI access:** remove the `netplay-ci-deploy` public key from the VM;
   it's independent of your personal keys.

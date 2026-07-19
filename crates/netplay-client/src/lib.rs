@@ -10,67 +10,10 @@
 //! [`NetEvent::Game`] delivers one. The game defines and codes its own payload.
 
 use futures_util::{SinkExt, StreamExt};
-use netplay_protocol::{
-    ClientMsg, PlayerId, PlayerInfo, Seat, ServerMsg, SharedTokenCredential, DEV_KEY_ID, DEV_TOKEN,
-    PROTOCOL_VERSION,
-};
+use netplay_protocol::{ClientMsg, PlayerId, PlayerInfo, Seat, ServerMsg, PROTOCOL_VERSION};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio_tungstenite::tungstenite::Message;
 use winit::event_loop::EventLoopProxy;
-
-/// Supplies the opaque authorization credential sent in the handshake (arbitrary
-/// JSON the server's authenticator interprets). A baked token lives behind this
-/// now; a platform-attestation provider can replace it later without touching
-/// [`connect`].
-pub trait AuthProvider {
-    fn credential(&self) -> serde_json::Value;
-}
-
-/// Reference provider: a versioned shared token.
-pub struct SharedToken {
-    pub key_id: u16,
-    pub token: String,
-}
-
-impl SharedToken {
-    /// The development default (matches the server's `SharedTokenAuth::dev`).
-    pub fn dev() -> Self {
-        Self {
-            key_id: DEV_KEY_ID,
-            token: DEV_TOKEN.to_string(),
-        }
-    }
-
-    /// Parse an `"id:token"` spec (the same shape as one server entry). The
-    /// token may itself contain `:`; only the first separates the key id.
-    pub fn from_spec(spec: &str) -> Option<Self> {
-        let (id, token) = spec.split_once(':')?;
-        Some(Self {
-            key_id: id.trim().parse().ok()?,
-            token: token.to_string(),
-        })
-    }
-
-    /// The token from the `NETPLAY_TOKEN` env var (`"id:token"`), or the dev
-    /// default when it's unset or malformed. Keeps the real shared secret out
-    /// of the binary — it's supplied at runtime, not baked in.
-    pub fn from_env_or_dev() -> Self {
-        std::env::var("NETPLAY_TOKEN")
-            .ok()
-            .and_then(|spec| Self::from_spec(&spec))
-            .unwrap_or_else(Self::dev)
-    }
-}
-
-impl AuthProvider for SharedToken {
-    fn credential(&self) -> serde_json::Value {
-        SharedTokenCredential {
-            key_id: self.key_id,
-            token: self.token.clone(),
-        }
-        .to_value()
-    }
-}
 
 /// A message from the network, injected into the winit event loop as a user
 /// event.
@@ -256,29 +199,6 @@ fn server_msg_to_event(msg: ServerMsg) -> Option<NetEvent> {
 
 #[cfg(test)]
 mod tests {
-    use super::SharedToken;
-
-    #[test]
-    fn from_spec_parses_id_and_token() {
-        let t = SharedToken::from_spec("2:9f3c").expect("valid spec");
-        assert_eq!(t.key_id, 2);
-        assert_eq!(t.token, "9f3c");
-    }
-
-    #[test]
-    fn from_spec_keeps_colons_in_the_token() {
-        // Only the first colon separates the key id.
-        let t = SharedToken::from_spec("7:ab:cd").expect("valid spec");
-        assert_eq!(t.key_id, 7);
-        assert_eq!(t.token, "ab:cd");
-    }
-
-    #[test]
-    fn from_spec_rejects_malformed() {
-        assert!(SharedToken::from_spec("no-colon").is_none());
-        assert!(SharedToken::from_spec("notanumber:tok").is_none());
-    }
-
     #[test]
     fn crypto_provider_lets_a_tls_config_build() {
         // Reproduces the wss:// handshake path that panicked when no crypto
