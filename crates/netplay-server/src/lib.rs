@@ -105,6 +105,11 @@ async fn route(
         let body = netplay_protocol::service_descriptor().to_string();
         return Ok(json_ok(body));
     }
+    // The same contract as a standard AsyncAPI 3.0 document.
+    if req.method() == Method::GET && req.uri().path() == "/asyncapi.json" {
+        let body = netplay_protocol::asyncapi_document().to_string();
+        return Ok(json_ok(body));
+    }
 
     // A WebSocket upgrade → hand the socket to the relay.
     if hyper_tungstenite::is_upgrade_request(&req) {
