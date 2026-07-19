@@ -66,6 +66,11 @@ set-admin NAME:
 online:
     cargo run -p app -- --online
 
+# Fetch the admin API's OpenAPI 3.0 document (its self-describing contract).
+# Pretty-prints with jq if present. URL defaults to the public admin host.
+openapi URL="https://admin.netplay.oliverj.network":
+    curl -fsS {{URL}}/admin/openapi.json | { jq . 2>/dev/null || cat; }
+
 # Deploy the relay to the exe.dev VM (manual GitHub Actions workflow).
 # Requires the DEPLOY_SSH_KEY and NETPLAY_ADMIN repo secrets — see deploy/README.md.
 deploy:

@@ -324,6 +324,19 @@ async fn admin_durable_token_is_minted_from_a_bearer_and_authorizes() {
     assert!(r.starts_with("HTTP/1.1 401"), "{}", first_line(&r));
 }
 
+#[tokio::test]
+async fn openapi_doc_is_served_without_auth() {
+    let (addr, _dir) = start_server_with_admin().await;
+
+    // No bearer token required — it's how a client discovers the API.
+    let r = http(addr, &get("/admin/openapi.json", None)).await;
+    assert!(r.starts_with("HTTP/1.1 200"), "{}", first_line(&r));
+    let doc: serde_json::Value = serde_json::from_str(body_of(&r)).unwrap();
+    assert_eq!(doc["openapi"], "3.0.3");
+    assert!(doc["paths"]["/admin/login"]["post"].is_object());
+    assert!(doc["paths"]["/admin/stats"]["get"].is_object());
+}
+
 fn first_line(response: &str) -> &str {
     response.lines().next().unwrap_or("")
 }

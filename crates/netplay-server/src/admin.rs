@@ -4,7 +4,8 @@
 //! bearer token (persisted as a session); `POST /admin/tokens` trades a valid
 //! bearer for a longer-lived one (so a tool authenticates once and then holds a
 //! durable token). The read endpoints require `Authorization: Bearer <token>`.
-//! The data comes from the same lobby actor the game relay uses.
+//! The data comes from the same lobby actor the game relay uses. `GET
+//! /admin/openapi.json` (unauthenticated) describes the whole surface.
 
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full, Limited};
@@ -35,6 +36,8 @@ pub async fn route(
     lobby_tx: mpsc::Sender<LobbyCmd>,
 ) -> Response<Full<Bytes>> {
     match (req.method(), req.uri().path()) {
+        // Unauthenticated on purpose: a client discovers how to authenticate here.
+        (&Method::GET, "/admin/openapi.json") => json_ok(crate::openapi::document().to_string()),
         (&Method::POST, "/admin/login") => login(req, &pool).await,
         (&Method::POST, "/admin/tokens") => issue_token(req, &pool).await,
         (&Method::GET, "/admin/players") => {

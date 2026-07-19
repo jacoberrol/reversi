@@ -147,10 +147,13 @@ Rust server on a cloud VM. We build the real topology now and stage toward that.
     and then holds a weeks-long token across restarts, never caching the password. Both are ordinary
     session rows; a durable token is just one with a longer TTL, so the same lazy-prune expiry applies.
   - **Endpoints:** `GET /admin/players`, `/admin/matches`, `/admin/stats` (all bearer-guarded), and
-    `GET /admin/openapi.json` for discovery. We dropped the earlier WS-side `/schema` +
-    `/asyncapi.json` docs: with the control surface now genuinely REST, OpenAPI is the fitting
-    standard, and the gameplay wire contract is small enough to read from the `netplay-protocol`
-    types directly.
+    `GET /admin/openapi.json` (**unauthenticated** — a client can't be asked for a token to learn how
+    to get one, and the doc holds no secrets) for discovery. We dropped the earlier WS-side `/schema`
+    + `/asyncapi.json` docs: with the control surface now genuinely REST, OpenAPI is the fitting
+    standard. The OpenAPI document is **hand-written** (`openapi.rs`), not derived — five endpoints
+    don't justify re-adding the `schemars`/derive machinery we removed, and a literal sits next to the
+    routes it describes. Kept in sync with the routes and `netplay-protocol` types by hand (a test
+    asserts every route appears).
 - **The winit loop stays synchronous; networking uses a runtime off to the side.** The relay
   (`netplay-server`) uses tokio (per-connection tasks + an in-memory lobby actor). The client
   runs its WebSocket on a **single-thread tokio runtime confined to a dedicated network thread**,
@@ -235,5 +238,5 @@ screen state so a custom UI could replace it.
 - ✅ Deploy to a cloud VM (Stage 8D): WebSocket transport + TLS-fronted relay on exe.dev.
 - ✅ Accounts + RBAC on SQLite (Stage 10): argon2id accounts; admin surface gated by role.
 - ✅ Accounts-only login/register on the title screen (Stage 11): shared token removed.
-- Admin REST control plane on its own host, bearer sessions (Stage 12): SSE events + OpenAPI to follow.
+- Admin REST control plane on its own host, bearer sessions + OpenAPI discovery (Stage 12): SSE events to follow.
 - Out of scope for now: reconnect, spectating, NAT traversal.
