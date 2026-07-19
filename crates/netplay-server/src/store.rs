@@ -187,15 +187,16 @@ pub async fn create_session(
 }
 
 /// The `(user_id, role)` a bearer token authorizes, or `None` if unknown/expired.
-/// Prunes expired sessions lazily. Callers that only need the role can ignore the
-/// id; the id lets an authenticated caller mint a fresh session for the same user.
+/// Callers that only need the role can ignore the id; the id lets an authenticated
+/// caller mint a fresh session for the same user.
+///
+/// Validation is a **pure read**: an expired token is never honored (the query
+/// filters on `expires_at`), but the dead row is left in place — reclaiming it is
+/// an operator action ([`prune_expired_sessions`]), not something every request pays for.
 pub async fn session_identity(
     pool: &SqlitePool,
     token: &str,
 ) -> Result<Option<(i64, Role)>, sqlx::Error> {
-    let _ = sqlx::query("DELETE FROM sessions WHERE expires_at <= datetime('now')")
-        .execute(pool)
-        .await;
     let row: Option<(i64, String)> = sqlx::query_as(
         "SELECT user_id, role FROM sessions WHERE token_hash = ? AND expires_at > datetime('now')",
     )
@@ -203,6 +204,17 @@ pub async fn session_identity(
     .fetch_optional(pool)
     .await?;
     Ok(row.map(|(id, role)| (id, Role::from_db(&role))))
+}
+
+/// Delete every session whose TTL has passed, returning how many were removed.
+/// Because [`session_identity`] never honors an expired token, this only reclaims
+/// storage — it's an operator action (the `prune-tokens` subcommand), deliberately
+/// kept off the request path rather than run on a timer or on every lookup.
+pub async fn prune_expired_sessions(pool: &SqlitePool) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query("DELETE FROM sessions WHERE expires_at <= datetime('now')")
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected())
 }
 
 #[cfg(test)]
@@ -284,8 +296,32 @@ mod tests {
         );
         assert_eq!(session_identity(&pool, "not-a-token").await.unwrap(), None);
 
-        // An already-expired session is not honored (and gets pruned).
+        // An already-expired session is never honored (validation filters on TTL),
+        // even though the row still exists until an operator prunes it.
         let expired = create_session(&pool, id, role, -1).await.unwrap();
         assert_eq!(session_identity(&pool, &expired).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn prune_removes_only_expired_sessions() {
+        let (pool, _dir) = temp_pool().await;
+        upsert_admin(&pool, "root", "s3cret").await.unwrap();
+        let (id, role) = verify_account(&pool, "root", "s3cret")
+            .await
+            .unwrap()
+            .unwrap();
+
+        let live = create_session(&pool, id, role, 24).await.unwrap();
+        create_session(&pool, id, role, -1).await.unwrap();
+        create_session(&pool, id, role, -5).await.unwrap();
+
+        // Only the two expired rows are reclaimed; the live token still works.
+        assert_eq!(prune_expired_sessions(&pool).await.unwrap(), 2);
+        assert_eq!(
+            session_identity(&pool, &live).await.unwrap(),
+            Some((id, Role::Admin))
+        );
+        // Idempotent: nothing left to prune.
+        assert_eq!(prune_expired_sessions(&pool).await.unwrap(), 0);
     }
 }

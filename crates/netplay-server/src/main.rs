@@ -15,12 +15,29 @@ const DEFAULT_ADMIN_HOST: &str = "admin.netplay.oliverj.network";
 
 #[tokio::main]
 async fn main() {
-    let addr = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "127.0.0.1:5000".to_string());
+    let arg = std::env::args().nth(1);
+    let db_path = std::env::var("NETPLAY_DB").unwrap_or_else(|_| "netplay.db".to_string());
+
+    // `prune-tokens`: reclaim expired admin sessions, then exit. An operator
+    // action — validation never prunes (see store::session_identity), so dead
+    // rows accumulate until someone runs this against the DB.
+    if arg.as_deref() == Some("prune-tokens") {
+        let pool = store::open(&db_path)
+            .await
+            .unwrap_or_else(|e| panic!("failed to open database {db_path}: {e}"));
+        match store::prune_expired_sessions(&pool).await {
+            Ok(n) => println!("pruned {n} expired session(s) from {db_path}"),
+            Err(e) => {
+                eprintln!("prune failed: {e}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
+    let addr = arg.unwrap_or_else(|| "127.0.0.1:5000".to_string());
 
     // Open + migrate the database up front; fail fast if the store is unusable.
-    let db_path = std::env::var("NETPLAY_DB").unwrap_or_else(|_| "netplay.db".to_string());
     let pool = store::open(&db_path)
         .await
         .unwrap_or_else(|e| panic!("failed to open database {db_path}: {e}"));

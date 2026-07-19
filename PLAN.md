@@ -405,3 +405,9 @@ Record notable plan/scope changes here so the "why" survives.
   Go TUI) authenticates once and holds a durable token instead of re-sending the password. Generalized
   `store::session_role` → `session_identity` (returns `(user_id, role)`) so a fresh session can be
   minted for the caller's account; `is_admin` became `admin_identity`. Tested end-to-end.
+- 2026-07-19 — Stage 12: session validation is now a **pure read** — dropped the inline
+  `DELETE` that `session_identity` ran on every lookup (it turned each admin read into a
+  table-scanning write; correctness already lived in the `expires_at` filter). Reclaiming expired
+  rows moved to an operator action: `store::prune_expired_sessions`, exposed as the
+  `netplay-server prune-tokens` subcommand and `just prune-tokens` (`deploy/README` documents the
+  on-VM invocation). Chose operator-run over a periodic background sweep to avoid the extra moving part.
