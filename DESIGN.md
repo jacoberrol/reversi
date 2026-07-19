@@ -136,6 +136,11 @@ Rust server on a cloud VM. We build the real topology now and stage toward that.
     `Authorization: Bearer <token>`. Tokens are 256-bit random, stored **sha256-hashed** in a
     `sessions` table (never raw), with a TTL; expired rows are pruned lazily on lookup. (argon2 is
     for the low-entropy passwords; a high-entropy token needs only a fast hash.)
+  - **Two token lifetimes.** A login token is short (one work session, 24 h). `POST /admin/tokens`
+    (bearer-guarded, optional `{days}`, default 30, capped at 90) mints a **durable** token — a
+    fresh session for the same account — so a tool (the Go TUI) authenticates once with the password
+    and then holds a weeks-long token across restarts, never caching the password. Both are ordinary
+    session rows; a durable token is just one with a longer TTL, so the same lazy-prune expiry applies.
   - **Endpoints:** `GET /admin/players`, `/admin/matches`, `/admin/stats` (all bearer-guarded), and
     `GET /admin/openapi.json` for discovery. We dropped the earlier WS-side `/schema` +
     `/asyncapi.json` docs: with the control surface now genuinely REST, OpenAPI is the fitting

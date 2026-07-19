@@ -186,19 +186,23 @@ pub async fn create_session(
     Ok(token)
 }
 
-/// The role a bearer token authorizes, or `None` if unknown/expired. Prunes
-/// expired sessions lazily.
-pub async fn session_role(pool: &SqlitePool, token: &str) -> Result<Option<Role>, sqlx::Error> {
+/// The `(user_id, role)` a bearer token authorizes, or `None` if unknown/expired.
+/// Prunes expired sessions lazily. Callers that only need the role can ignore the
+/// id; the id lets an authenticated caller mint a fresh session for the same user.
+pub async fn session_identity(
+    pool: &SqlitePool,
+    token: &str,
+) -> Result<Option<(i64, Role)>, sqlx::Error> {
     let _ = sqlx::query("DELETE FROM sessions WHERE expires_at <= datetime('now')")
         .execute(pool)
         .await;
-    let row: Option<(String,)> = sqlx::query_as(
-        "SELECT role FROM sessions WHERE token_hash = ? AND expires_at > datetime('now')",
+    let row: Option<(i64, String)> = sqlx::query_as(
+        "SELECT user_id, role FROM sessions WHERE token_hash = ? AND expires_at > datetime('now')",
     )
     .bind(sha256_hex(token))
     .fetch_optional(pool)
     .await?;
-    Ok(row.map(|(role,)| Role::from_db(&role)))
+    Ok(row.map(|(id, role)| (id, Role::from_db(&role))))
 }
 
 #[cfg(test)]
@@ -275,13 +279,13 @@ mod tests {
 
         let token = create_session(&pool, id, role, 24).await.unwrap();
         assert_eq!(
-            session_role(&pool, &token).await.unwrap(),
-            Some(Role::Admin)
+            session_identity(&pool, &token).await.unwrap(),
+            Some((id, Role::Admin))
         );
-        assert_eq!(session_role(&pool, "not-a-token").await.unwrap(), None);
+        assert_eq!(session_identity(&pool, "not-a-token").await.unwrap(), None);
 
         // An already-expired session is not honored (and gets pruned).
         let expired = create_session(&pool, id, role, -1).await.unwrap();
-        assert_eq!(session_role(&pool, &expired).await.unwrap(), None);
+        assert_eq!(session_identity(&pool, &expired).await.unwrap(), None);
     }
 }

@@ -248,6 +248,9 @@ the game WebSocket, which now carries *only* gameplay. Supersedes Stage 9's WS a
   New `admin` module: `POST /admin/login` (`{name,password}` → bearer token, admin-only) and
   bearer-guarded `GET /admin/{players,matches,stats}`. `serve` takes the admin host and routes on
   it. `just schema`/`asyncapi` recipes removed; `NETPLAY_ADMIN_HOST` added to the systemd unit.
+  Follow-up: `POST /admin/tokens` (bearer-guarded, optional `{days}`, default 30, max 90) mints a
+  **durable** token so a tool authenticates once and holds a weeks-long token without re-sending the
+  password.
 - 🔮 **Increment 2 — SSE `/admin/events`.** Re-add lobby event broadcast, streamed to bearer-guarded
   SSE subscribers (replaces the old WS `SubscribeEvents`).
 - 🔮 **Increment 3 — `GET /admin/openapi.json`.** OpenAPI document describing the admin REST API.
@@ -397,3 +400,8 @@ Record notable plan/scope changes here so the "why" survives.
   the `schema` feature, `just schema`/`asyncapi`). Added `sha2` dep, `NETPLAY_ADMIN_HOST` to the
   systemd unit. Supersedes Stage 9's WS admin console. SSE `/admin/events` + `/admin/openapi.json`
   land in increments 2–3.
+- 2026-07-19 — Stage 12: added `POST /admin/tokens` — a bearer-guarded endpoint that trades a valid
+  admin session for a longer-lived one (optional `{days}`, default 30, capped at 90), so a tool (the
+  Go TUI) authenticates once and holds a durable token instead of re-sending the password. Generalized
+  `store::session_role` → `session_identity` (returns `(user_id, role)`) so a fresh session can be
+  minted for the caller's account; `is_admin` became `admin_identity`. Tested end-to-end.
