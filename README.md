@@ -74,8 +74,10 @@ on one and `just play ws://<that-Mac's-IP>:5000 <name>` on each.
 ### Multiplayer (over the internet)
 
 `just online <name>` connects to the public relay at `wss://relay.netplay.oliverj.network` (TLS
-terminated by a front proxy that forwards to the server on the VM). Deploying/operating that relay
-is documented in [deploy/README.md](deploy/README.md); the architecture is in
+terminated by a front proxy that forwards to the server on the VM). The relay is gated by a shared
+token — set `NETPLAY_TOKEN=<id:token>` in your environment before `just online` (the value is shared
+out-of-band; unset falls back to the dev token, which the deployed relay rejects). Deploying/operating
+that relay is documented in [deploy/README.md](deploy/README.md); the architecture is in
 [DESIGN.md §9](DESIGN.md).
 
 ## Project layout

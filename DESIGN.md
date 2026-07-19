@@ -152,7 +152,10 @@ can use, split into `netplay-protocol` / `netplay-server` / `netplay-client`. Th
 - **Deploy (Stage 8D2, done).** The relay runs on an exe.dev VM under `systemd`, bound to
   `127.0.0.1:8000`; the provider's proxy terminates TLS at `relay.netplay.oliverj.network` and
   forwards to it. The client bakes that `wss://` URL in as `DEFAULT_RELAY_URL` (`--online`);
-  `--server URL` overrides for local dev. Deploys are **Ansible driven by a manual GitHub Actions
+  `--server URL` overrides for local dev. The client's token comes from the `NETPLAY_TOKEN` env var
+  (dev default if unset), so the real shared secret is supplied at runtime, never baked into the
+  binary or the repo — a deterrence gate, matching the honest threat model above. Deploys are
+  **Ansible driven by a manual GitHub Actions
   workflow** (`deploy/`): CI builds a static `x86_64-unknown-linux-musl` binary (no toolchain on the
   VM, no glibc coupling) and the playbook installs it under a locked-down system user with a hardened
   unit; the `NETPLAY_TOKENS` secret and a dedicated deploy SSH key live in GitHub Secrets. Chosen

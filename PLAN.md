@@ -262,5 +262,6 @@ Record notable plan/scope changes here so the "why" survives.
 - 2026-07-18 — Stage 8D2 done: deploy tooling. `deploy/` Ansible playbook (locked-down `netplay` user,
   hardened systemd unit on `127.0.0.1:8000`, `NETPLAY_TOKENS` env) + manual-dispatch `Deploy relay`
   workflow that builds a static `x86_64-musl` binary and runs the playbook via a dedicated CI SSH key
-  (GH Secrets). Client bakes in `DEFAULT_RELAY_URL` = `wss://relay.netplay.oliverj.network` (`--online`);
+  (GH Secrets). Client bakes in `DEFAULT_RELAY_URL` = `wss://relay.netplay.oliverj.network` (`--online`)
+  and reads its shared token from `NETPLAY_TOKEN` env (dev default if unset — secret never baked in);
   `just online` / `just deploy` added. Owner supplies secrets and triggers the workflow.

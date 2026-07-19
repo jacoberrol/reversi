@@ -44,7 +44,33 @@ user on the VM (add it in the exe.dev key UI, or append to
 | Secret | Value |
 |---|---|
 | `DEPLOY_SSH_KEY` | the **private** key: `gh secret set DEPLOY_SSH_KEY < ~/.ssh/netplay-ci-deploy` |
-| `NETPLAY_TOKENS` | the real `keyid:token,keyid:token` string: `gh secret set NETPLAY_TOKENS` |
+| `NETPLAY_TOKENS` | the accepted `keyid:token[,keyid:token]` string (see below): `gh secret set NETPLAY_TOKENS` |
+
+Generate a token with high entropy (the key id is any small integer; the token
+must not contain a comma):
+
+```sh
+echo "2:$(openssl rand -hex 32)"     # e.g. 2:9f3c… — paste into `gh secret set NETPLAY_TOKENS`
+```
+
+Once `NETPLAY_TOKENS` is set, the server accepts **only** those keys — the
+built-in dev token stops working, so clients must present a matching token
+(next section).
+
+### 3. Connect clients with the shared token
+
+The client reads its credential from the `NETPLAY_TOKEN` env var (a single
+`id:token`), falling back to the dev token when unset. The real secret is never
+baked into the binary — you supply it at runtime:
+
+```sh
+export NETPLAY_TOKEN=2:9f3c…   # the same id:token you put in NETPLAY_TOKENS
+just online <name>
+```
+
+Share that value out-of-band with anyone you want to let in. This is a
+deterrence gate (a distributed client can't keep a secret); real
+per-device attestation is a later stage.
 
 ## Triggering a deploy
 

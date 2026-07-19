@@ -61,8 +61,10 @@ impl ApplicationHandler<NetEvent> for App {
 
         if let Launch::Network { addr, name } = &self.launch {
             // Connection is async on the network thread; failures arrive as
-            // `NetEvent::Error`/`Disconnected` and show in the lobby.
-            let auth = netplay_client::SharedToken::dev();
+            // `NetEvent::Error`/`Disconnected` and show in the lobby. The token
+            // comes from the `NETPLAY_TOKEN` env var (dev default if unset), so
+            // the real shared secret is never baked into the binary.
+            let auth = netplay_client::SharedToken::from_env_or_dev();
             let handle = netplay_client::connect(addr, name, &auth, self.proxy.clone());
             state.enter_network(handle, name.clone());
         }
