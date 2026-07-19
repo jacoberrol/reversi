@@ -4,5 +4,11 @@
   // `cargo run`). Sharing lets the two race and corrupt incremental-build
   // fingerprints, which shows up as phantom "unresolved import" errors even
   // though the code compiles fine. This isolates them into target/rust-analyzer.
-  "rust-analyzer.cargo.targetDir": true
+  "rust-analyzer.cargo.targetDir": true,
+
+  // Analyze with all features on, so feature-gated code (e.g. the netplay
+  // `schema` feature behind `service_descriptor`/`asyncapi_document`) resolves
+  // instead of showing up as phantom "unresolved" errors. The workspace builds
+  // clean under `--all-features`.
+  "rust-analyzer.cargo.features": "all"
 }
