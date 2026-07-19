@@ -32,6 +32,12 @@ pub enum AuthError {
     Malformed,
     UnknownKey,
     BadToken,
+    /// Login failed: no such account or wrong password.
+    BadLogin,
+    /// Registration failed: the name is already taken.
+    NameTaken,
+    /// Registration failed: the password is too short.
+    WeakPassword,
 }
 
 impl AuthError {
@@ -40,9 +46,15 @@ impl AuthError {
             AuthError::Malformed => "malformed credential",
             AuthError::UnknownKey => "unknown key id",
             AuthError::BadToken => "invalid token",
+            AuthError::BadLogin => "wrong name or password",
+            AuthError::NameTaken => "that name is taken",
+            AuthError::WeakPassword => "password too short (min 8 characters)",
         }
     }
 }
+
+/// Minimum length for a self-registered password.
+pub const MIN_PASSWORD_LEN: usize = 8;
 
 /// Authorizes a connecting client from its opaque credential (arbitrary JSON the
 /// implementation interprets; the relay never inspects it). Async because a
@@ -108,45 +120,54 @@ impl Authenticator for SharedTokenAuth {
     }
 }
 
-/// Authenticator backed by the accounts table, with the shared token as an
-/// anonymous-player fallback. A named-account login (`{name, password}`) is
-/// argon2id-verified against the DB and yields that account's role; anything
-/// else falls through to the shared-token (anonymous `player`) path. Removing
-/// anonymous access later is just dropping the fallback.
+/// Accounts-only authenticator. Every connection must present an account
+/// credential `{name, password}` (login) or `{name, password, register: true}`
+/// (create the account, then log in). argon2id-verified against the DB.
 pub struct DbAuth {
     pool: SqlitePool,
-    anonymous: SharedTokenAuth,
 }
 
 impl DbAuth {
-    pub fn new(pool: SqlitePool, anonymous: SharedTokenAuth) -> Self {
-        Self { pool, anonymous }
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
     }
 }
 
-/// A named-account login credential.
+/// A login (`register` false/absent) or registration (`register` true) credential.
 #[derive(serde::Deserialize)]
 struct AccountCredential {
     name: String,
     password: String,
+    #[serde(default)]
+    register: bool,
 }
 
 #[async_trait::async_trait]
 impl Authenticator for DbAuth {
     async fn verify(&self, credential: &serde_json::Value) -> Result<Identity, AuthError> {
-        // A `{name, password}` shape is an account login; verify it against the DB.
-        if let Ok(account) = serde_json::from_value::<AccountCredential>(credential.clone()) {
-            return match store::verify_account(&self.pool, &account.name, &account.password).await {
-                Ok(Some(role)) => Ok(Identity {
-                    role,
-                    label: format!("account {}", account.name),
-                }),
-                Ok(None) => Err(AuthError::BadToken),
-                Err(_) => Err(AuthError::Malformed),
-            };
+        let account = serde_json::from_value::<AccountCredential>(credential.clone())
+            .map_err(|_| AuthError::Malformed)?;
+        if account.name.trim().is_empty() {
+            return Err(AuthError::Malformed);
         }
-        // Otherwise, the shared-token anonymous-player path.
-        self.anonymous.verify(credential).await
+        let label = format!("account {}", account.name);
+
+        if account.register {
+            if account.password.len() < MIN_PASSWORD_LEN {
+                return Err(AuthError::WeakPassword);
+            }
+            match store::create_account(&self.pool, &account.name, &account.password).await {
+                Ok(role) => Ok(Identity { role, label }),
+                Err(store::CreateError::NameTaken) => Err(AuthError::NameTaken),
+                Err(store::CreateError::Db(_)) => Err(AuthError::Malformed),
+            }
+        } else {
+            match store::verify_account(&self.pool, &account.name, &account.password).await {
+                Ok(Some(role)) => Ok(Identity { role, label }),
+                Ok(None) => Err(AuthError::BadLogin),
+                Err(_) => Err(AuthError::Malformed),
+            }
+        }
     }
 }
 

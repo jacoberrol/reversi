@@ -55,6 +55,35 @@ fn hash_password(password: &str) -> String {
         .to_string()
 }
 
+/// Why creating an account failed.
+#[derive(Debug)]
+pub enum CreateError {
+    /// The name is already registered.
+    NameTaken,
+    Db(sqlx::Error),
+}
+
+/// Register a new `player` account. Errors with [`CreateError::NameTaken`] if the
+/// name is taken (the `UNIQUE` constraint), else the DB error.
+pub async fn create_account(
+    pool: &SqlitePool,
+    name: &str,
+    password: &str,
+) -> Result<Role, CreateError> {
+    let hash = hash_password(password);
+    let result =
+        sqlx::query("INSERT INTO users (name, password_hash, role) VALUES (?, ?, 'player')")
+            .bind(name)
+            .bind(hash)
+            .execute(pool)
+            .await;
+    match result {
+        Ok(_) => Ok(Role::Player),
+        Err(sqlx::Error::Database(e)) if e.is_unique_violation() => Err(CreateError::NameTaken),
+        Err(e) => Err(CreateError::Db(e)),
+    }
+}
+
 /// Create the admin account (or reset its password + role if it already exists).
 /// Idempotent, so rotating the admin password is `NETPLAY_ADMIN` change + redeploy.
 pub async fn upsert_admin(
@@ -148,5 +177,21 @@ mod tests {
             verify_account(&pool, "root", "newpass").await.unwrap(),
             Some(Role::Admin)
         );
+    }
+
+    #[tokio::test]
+    async fn create_account_registers_a_player_and_rejects_duplicates() {
+        let (pool, _dir) = temp_pool().await;
+        let role = create_account(&pool, "alice", "password").await.unwrap();
+        assert_eq!(role, Role::Player);
+        assert_eq!(
+            verify_account(&pool, "alice", "password").await.unwrap(),
+            Some(Role::Player)
+        );
+        // The name is taken now.
+        assert!(matches!(
+            create_account(&pool, "alice", "other").await,
+            Err(CreateError::NameTaken)
+        ));
     }
 }

@@ -6,10 +6,8 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use futures_util::{SinkExt, StreamExt};
-use netplay_protocol::{
-    ClientMsg, Seat, ServerMsg, SharedTokenCredential, DEV_KEY_ID, DEV_TOKEN, PROTOCOL_VERSION,
-};
-use netplay_server::auth::{DbAuth, SharedTokenAuth};
+use netplay_protocol::{ClientMsg, Seat, ServerMsg, PROTOCOL_VERSION};
+use netplay_server::auth::DbAuth;
 use netplay_server::store;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -18,38 +16,40 @@ use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 
 type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
-fn dev_credential() -> serde_json::Value {
-    SharedTokenCredential {
-        key_id: DEV_KEY_ID,
-        token: DEV_TOKEN.to_string(),
-    }
-    .to_value()
+/// Credential that registers a new account.
+fn register(name: &str, password: &str) -> serde_json::Value {
+    serde_json::json!({ "name": name, "password": password, "register": true })
 }
 
-async fn start_server() -> SocketAddr {
+/// Credential that logs into an existing account.
+fn login(name: &str, password: &str) -> serde_json::Value {
+    serde_json::json!({ "name": name, "password": password })
+}
+
+/// An accounts-only server on an ephemeral port. Returns the address and the
+/// temp dir (kept alive by the caller so the SQLite file outlives the test).
+async fn start_server() -> (SocketAddr, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("test.db");
+    let pool = store::open(db.to_str().unwrap()).await.unwrap();
+    let auth = Arc::new(DbAuth::new(pool));
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    tokio::spawn(netplay_server::serve(
-        listener,
-        Arc::new(SharedTokenAuth::dev()),
-    ));
-    addr
+    tokio::spawn(netplay_server::serve(listener, auth));
+    (addr, dir)
 }
 
-/// A server backed by a real accounts DB with a seeded admin. Returns the
-/// address, the admin's login credential, and the temp dir (kept alive by the
-/// caller so the SQLite file outlives the test).
+/// Like [`start_server`], plus a seeded admin. Also returns the admin login.
 async fn start_server_with_admin() -> (SocketAddr, serde_json::Value, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("test.db");
     let pool = store::open(db.to_str().unwrap()).await.unwrap();
     store::upsert_admin(&pool, "root", "s3cret").await.unwrap();
-    let auth = Arc::new(DbAuth::new(pool, SharedTokenAuth::dev()));
+    let auth = Arc::new(DbAuth::new(pool));
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(netplay_server::serve(listener, auth));
-    let admin_cred = serde_json::json!({ "name": "root", "password": "s3cret" });
-    (addr, admin_cred, dir)
+    (addr, login("root", "s3cret"), dir)
 }
 
 async fn connect_ws(addr: SocketAddr, name: &str, credential: serde_json::Value) -> Ws {
@@ -96,9 +96,9 @@ async fn expect_matched(ws: &mut Ws) -> Seat {
 
 #[tokio::test]
 async fn invite_accept_relays_and_reports_disconnect() {
-    let addr = start_server().await;
-    let mut alice = connect_ws(addr, "Alice", dev_credential()).await;
-    let mut bob = connect_ws(addr, "Bob", dev_credential()).await;
+    let (addr, _dir) = start_server().await;
+    let mut alice = connect_ws(addr, "Alice", register("Alice", "password")).await;
+    let mut bob = connect_ws(addr, "Bob", register("Bob", "password")).await;
 
     // Alice sees Bob in a presence list (skipping any empty one that arrived
     // before Bob connected).
@@ -148,16 +148,39 @@ async fn invite_accept_relays_and_reports_disconnect() {
 
 #[tokio::test]
 async fn rejects_a_bad_credential() {
-    let addr = start_server().await;
+    let (addr, _dir) = start_server().await;
     let mut ws = connect_ws(addr, "Mallory", serde_json::json!("garbage")).await;
     assert!(matches!(recv(&mut ws).await, ServerMsg::Error { .. }));
 }
 
 #[tokio::test]
+async fn registration_login_and_their_failures() {
+    let (addr, _dir) = start_server().await;
+
+    // Register → joins the lobby (a presence list arrives).
+    let mut dave = connect_ws(addr, "Dave", register("Dave", "password")).await;
+    assert!(matches!(recv(&mut dave).await, ServerMsg::Presence { .. }));
+
+    // A taken name, a too-short password, and a wrong login are all refused.
+    let mut dupe = connect_ws(addr, "Dave", register("Dave", "different")).await;
+    assert!(matches!(recv(&mut dupe).await, ServerMsg::Error { .. }));
+
+    let mut weak = connect_ws(addr, "Eve", register("Eve", "short")).await;
+    assert!(matches!(recv(&mut weak).await, ServerMsg::Error { .. }));
+
+    let mut wrong = connect_ws(addr, "Dave", login("Dave", "nope")).await;
+    assert!(matches!(recv(&mut wrong).await, ServerMsg::Error { .. }));
+
+    // The right password logs in.
+    let mut relog = connect_ws(addr, "Dave", login("Dave", "password")).await;
+    assert!(matches!(recv(&mut relog).await, ServerMsg::Presence { .. }));
+}
+
+#[tokio::test]
 async fn admin_queries_report_players_matches_and_stats() {
     let (addr, admin_cred, _dir) = start_server_with_admin().await;
-    let mut alice = connect_ws(addr, "Alice", dev_credential()).await;
-    let mut bob = connect_ws(addr, "Bob", dev_credential()).await;
+    let mut alice = connect_ws(addr, "Alice", register("Alice", "password")).await;
+    let mut bob = connect_ws(addr, "Bob", register("Bob", "password")).await;
 
     // Match Alice (seat 0, the inviter) and Bob (seat 1).
     let bob_id = loop {
@@ -212,7 +235,7 @@ async fn admin_queries_report_players_matches_and_stats() {
 async fn non_admin_is_refused_the_admin_surface() {
     let (addr, _admin_cred, _dir) = start_server_with_admin().await;
     // An anonymous player (shared token) — role Player, not admin.
-    let mut player = connect_ws(addr, "Randy", dev_credential()).await;
+    let mut player = connect_ws(addr, "Randy", register("Randy", "password")).await;
     send(&mut player, ClientMsg::ListPlayers).await;
     // Gets an error, never a Players reply.
     let reply = loop {
@@ -240,7 +263,7 @@ async fn admin_subscription_streams_live_events() {
     }
 
     // A join is pushed to the subscriber (with the new player's id).
-    let mut alice = connect_ws(addr, "Alice", dev_credential()).await;
+    let mut alice = connect_ws(addr, "Alice", register("Alice", "password")).await;
     let alice_id = loop {
         if let ServerMsg::PlayerJoined { player } = recv(&mut admin).await {
             if player.name == "Alice" {
@@ -248,7 +271,7 @@ async fn admin_subscription_streams_live_events() {
             }
         }
     };
-    let mut bob = connect_ws(addr, "Bob", dev_credential()).await;
+    let mut bob = connect_ws(addr, "Bob", register("Bob", "password")).await;
     let bob_id = loop {
         if let ServerMsg::PlayerJoined { player } = recv(&mut admin).await {
             if player.name == "Bob" {
@@ -280,7 +303,7 @@ async fn admin_subscription_streams_live_events() {
 
 #[tokio::test]
 async fn schema_endpoint_serves_the_descriptor() {
-    let addr = start_server().await;
+    let (addr, _dir) = start_server().await;
     // A plain HTTP GET (no WebSocket upgrade) on the same endpoint.
     let response = http_get(addr, "/schema").await;
     assert!(
@@ -296,7 +319,7 @@ async fn schema_endpoint_serves_the_descriptor() {
 
 #[tokio::test]
 async fn asyncapi_endpoint_serves_the_document() {
-    let addr = start_server().await;
+    let (addr, _dir) = start_server().await;
     let response = http_get(addr, "/asyncapi.json").await;
     assert!(
         response.contains("200 OK"),

@@ -188,9 +188,10 @@ biggest inflection above). We add **SQLite via `sqlx`** (async, tokio-native), h
 table (name, `password_hash`, `role`). Account secrets are **argon2id** PHC strings (per-hash salt
 embedded — the root admin uses a human password, so a slow salted hash is required, not sha256).
 This backs **accounts + RBAC**: `Identity` gains a `role`, and
-the admin surface is gated on `role == admin` (closing the deferred RBAC item). Anonymous play stays
-— the shared token still authorizes a plain `player` with no account — so existing game clients are
-untouched; accounts are additive and only they can be admins. Decisions:
+the admin surface is gated on `role == admin` (closing the deferred RBAC item). **Stage 11 goes
+accounts-only** — the shared-token/anonymous path is removed and every client logs in or
+self-registers (open registration; min 8-char password; argon2id). This reverses the earlier
+shared-token deterrence gate and anonymous-play decisions deliberately. Decisions:
 - **`sqlx` + bundled SQLite**, not `rusqlite`/`diesel`: async fits the tokio server without
   `spawn_blocking`, and bundling the SQLite C source keeps the static-musl deploy build free of a
   system `libsqlite3` (musl-tools already present handles the C compile).

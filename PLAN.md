@@ -202,9 +202,10 @@ contract while keeping serde/JSON (readable; we own both ends).
   `PlayerLeft`/`MatchStarted`, so the TUI updates without polling. The lobby marks subscribed
   connections and broadcasts events to them. In the published `/schema`.
 
-### Stage 10 — Accounts + RBAC on SQLite 🔨
+### Stage 10 — Accounts + RBAC on SQLite ✅
 Durable identity: the relay gains a database. Named accounts have a role; the admin surface is gated
-on it (closing the admin-RBAC backlog item). Anonymous play (shared token → `player`) stays.
+on it (closing the admin-RBAC backlog item). Anonymous play (shared token → `player`) stays for now
+(removed in Stage 11).
 - ✅ **Increment 1 — DB infrastructure.** `sqlx` + bundled SQLite; `store` module opens the DB
   (`NETPLAY_DB`, default `./netplay.db`) and runs embedded migrations on startup; `users` table
   (`0001_create_users.sql`). Ansible: `StateDirectory=netplay` + `NETPLAY_DB`. `just migrate-add`.
@@ -215,6 +216,21 @@ on it (closing the admin-RBAC backlog item). Anonymous play (shared token → `p
   gates the admin surface on `role == admin` (non-admins refused, not disconnected). `NETPLAY_ADMIN`
   added to the deploy workflow. argon2 verify runs on `spawn_blocking`; a dev-profile `opt-level=3`
   for argon2/blake2 keeps debug/CI test runs fast.
+
+### Stage 11 — Accounts-only: in-app login/register 🔨
+Remove anonymous play and the shared token entirely; every client logs in or self-registers with a
+name + password. Open registration (anyone can create an account). Reverses two recorded decisions
+(the shared-token deterrence gate; anonymous play).
+- ✅ **Increment 1 — Server registration + accounts-only.** `store::create_account`; the
+  authenticator handles login (`{name,password}`) and register (`{...,register:true}`, min 8-char
+  password, unique name) and **drops the anonymous fallback** — every connection must be an account.
+  New `AuthError::{BadLogin, NameTaken, WeakPassword}`. Server tests moved to register/login.
+- 🔮 **Increment 2 — Client login/register menu (egui).** A title screen with name + password and
+  Login / Create Identity, error display; connect with the account credential. Replaces `--name` and
+  the shared token in the client.
+- 🔮 **Increment 3 — Delete the shared token.** Remove `SharedTokenCredential`/`DEV_*`,
+  `SharedTokenAuth`, `NETPLAY_TOKENS`/`NETPLAY_TOKEN`, and the `rotate-token`/`set-token` plumbing;
+  update docs. `just deploy` no longer needs `NETPLAY_TOKENS`.
 
 **Deferred:** separate repo / published crate (until a second consumer exists); N-player /
 spectating / reconnect; client async / WASM browser client.
@@ -339,3 +355,8 @@ Record notable plan/scope changes here so the "why" survives.
   `NETPLAY_ADMIN="name:password"` seeds/rotates the admin on boot; added to the deploy env. Fixed a
   test race (subscribe-vs-join) and added `[profile.dev.package.argon2/blake2] opt-level = 3` so the
   otherwise ~1–2 s/hash debug argon2 runs fast in tests/CI (~20 ms).
+- 2026-07-19 — Stage 11 increment 1: server accounts-only. `DbAuth` dropped the shared-token
+  anonymous fallback; every connection is now a login (`{name,password}`) or registration
+  (`{...,register:true}` → `store::create_account`, min 8-char password, unique name). Open
+  registration. New `AuthError::{BadLogin,NameTaken,WeakPassword}`; server tests moved to
+  register/login. Client still ships the shared token until increment 2 — don't deploy this alone.
