@@ -39,35 +39,43 @@ Authorize the **public** key (`~/.ssh/netplay-ci-deploy.pub`) for the `exedev`
 user on the VM (add it in the exe.dev key UI, or append to
 `~/.ssh/authorized_keys`).
 
-### 2. Add the repository secrets
+### 2. Set the SSH key secret
 
 | Secret | Value |
 |---|---|
 | `DEPLOY_SSH_KEY` | the **private** key: `gh secret set DEPLOY_SSH_KEY < ~/.ssh/netplay-ci-deploy` |
-| `NETPLAY_TOKENS` | the accepted `keyid:token[,keyid:token]` string (see below): `gh secret set NETPLAY_TOKENS` |
 
-Generate a token with high entropy (the key id is any small integer; the token
-must not contain a comma):
+(The `NETPLAY_TOKENS` secret is set for you by `just rotate-token`, next.)
+
+### 3. Mint the relay token (owner)
+
+`just rotate-token` mints a fresh high-entropy token and stores it in **both**
+places at once — your macOS login Keychain (for `just online`) and the
+`NETPLAY_TOKENS` GitHub secret (for the server):
 
 ```sh
-echo "2:$(openssl rand -hex 32)"     # e.g. 2:9f3c… — paste into `gh secret set NETPLAY_TOKENS`
+just rotate-token        # generates 2:<random>, → Keychain + NETPLAY_TOKENS secret
+just deploy              # apply it on the running relay (see below)
 ```
 
-Once `NETPLAY_TOKENS` is set, the server accepts **only** those keys — the
-built-in dev token stops working, so clients must present a matching token
-(next section).
+The token format is `keyid:token` (`NETPLAY_TOKENS` accepts a comma-separated
+list of them). Once the secret is set, the server accepts **only** those keys —
+the built-in dev token stops working, so clients must present a matching token.
+Rotate any time by re-running `just rotate-token` + `just deploy`.
 
-### 3. Connect clients with the shared token
+### 4. Connect clients with the shared token
 
 The client reads its credential from the `NETPLAY_TOKEN` env var (a single
-`id:token`), falling back to the dev token when unset. The real secret is never
-baked into the binary — you supply it at runtime. On macOS, store it once in
-the login Keychain and let `just online` fetch it:
+`id:token`), falling back to the dev token when unset — the real secret is never
+baked into the binary. As the owner, `just rotate-token` already put it in your
+Keychain, so you just:
 
 ```sh
-just set-token          # prompts for the id:token (no echo); stores it in Keychain
-just online <name>      # reads NETPLAY_TOKEN from the Keychain automatically
+just online <name>       # reads the token from the Keychain automatically
 ```
+
+Anyone you invite runs `just set-token` once (paste the token you share with
+them out-of-band), then `just online <name>`.
 
 `just online` prefers an already-exported `NETPLAY_TOKEN`, then the Keychain,
 then the dev default — so `export NETPLAY_TOKEN=2:…` still works as a one-off
