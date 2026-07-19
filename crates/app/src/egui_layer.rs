@@ -63,6 +63,22 @@ impl EguiLayer {
         });
     }
 
+    /// Feed typed text (for text fields). Winit gives us the resolved string.
+    pub fn text(&mut self, text: String) {
+        self.events.push(Event::Text(text));
+    }
+
+    /// Feed an editing key press (Backspace, Enter, arrows, …) to egui.
+    pub fn key(&mut self, key: egui::Key) {
+        self.events.push(Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::default(),
+        });
+    }
+
     /// Run `run_ui` and draw it to `view`, clearing to the lobby background.
     #[allow(clippy::too_many_arguments)] // a wgpu render entry point; grouping adds noise
     pub fn render(

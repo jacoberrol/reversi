@@ -6,12 +6,22 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use render::{board_view, Renderer};
+use winit::event::{ElementState, KeyEvent};
+use winit::event_loop::EventLoopProxy;
+use winit::keyboard::{Key, NamedKey};
 use winit::window::Window;
 
-use netplay_client::{NetEvent, NetHandle};
+use netplay_client::NetEvent;
 
 use crate::egui_layer::EguiLayer;
 use crate::session::Session;
+
+/// What the login screen needs to actually connect: the relay URL and the proxy
+/// to deliver network events back to the event loop.
+struct NetContext {
+    proxy: EventLoopProxy<NetEvent>,
+    url: String,
+}
 
 pub struct WindowState {
     window: Arc<Window>,
@@ -22,6 +32,8 @@ pub struct WindowState {
     renderer: Renderer,
     egui: EguiLayer,
     session: Session,
+    /// Set in network mode; how the login screen connects.
+    net: Option<NetContext>,
     /// Last cursor position (physical pixels).
     cursor: [f32; 2],
 }
@@ -87,6 +99,7 @@ impl WindowState {
             renderer,
             egui,
             session: Session::new(),
+            net: None,
             cursor: [0.0, 0.0],
         }
     }
@@ -107,7 +120,7 @@ impl WindowState {
 
     pub fn set_cursor(&mut self, x: f32, y: f32) {
         self.cursor = [x, y];
-        if self.session.is_lobby() {
+        if self.session.uses_egui() {
             let ppp = self.window.scale_factor() as f32;
             self.egui.pointer_moved([x / ppp, y / ppp]);
             self.request_redraw();
@@ -115,7 +128,7 @@ impl WindowState {
     }
 
     pub fn mouse_button(&mut self, pressed: bool) {
-        if self.session.is_lobby() {
+        if self.session.uses_egui() {
             self.egui.pointer_button(pressed);
             self.request_redraw();
         } else if pressed {
@@ -124,6 +137,28 @@ impl WindowState {
                 self.request_redraw();
             }
         }
+    }
+
+    /// True while the login screen is up (routes keyboard to the text fields).
+    pub fn is_login(&self) -> bool {
+        self.session.is_login()
+    }
+
+    /// Feed a keyboard event into the login form's text fields.
+    pub fn login_key(&mut self, event: &KeyEvent) {
+        if event.state != ElementState::Pressed {
+            return;
+        }
+        if let Some(key) = to_egui_key(&event.logical_key) {
+            self.egui.key(key);
+        }
+        if let Some(text) = &event.text {
+            let printable: String = text.chars().filter(|c| !c.is_control()).collect();
+            if !printable.is_empty() {
+                self.egui.text(printable);
+            }
+        }
+        self.request_redraw();
     }
 
     fn handle_game_click(&mut self, x: f32, y: f32) -> bool {
@@ -153,12 +188,37 @@ impl WindowState {
 
     // --- network --------------------------------------------------------
 
-    pub fn enter_network(&mut self, handle: NetHandle, name: String) {
-        self.session.enter_network(handle, name);
+    /// Enter network mode on the login screen, pre-filling the remembered name.
+    pub fn begin_login(&mut self, url: String, proxy: EventLoopProxy<NetEvent>) {
+        self.net = Some(NetContext { proxy, url });
+        self.session.begin_login(crate::config::load_username());
+        self.request_redraw();
     }
 
-    pub fn set_net_error(&mut self, name: String, message: String) {
-        self.session.set_net_error(name, message);
+    /// Handle a login/register submission: validate, connect, remember the name.
+    fn submit_login(&mut self, register: bool) {
+        if self.session.login_connecting() {
+            return;
+        }
+        let (name, password) = {
+            let form = self.session.login_form();
+            (form.name.trim().to_string(), form.password.clone())
+        };
+        if name.is_empty() {
+            self.session.login_error("enter a username".to_string());
+            return;
+        }
+        if register && password.len() < 8 {
+            self.session
+                .login_error("password too short (min 8 characters)".to_string());
+            return;
+        }
+        let Some(net) = &self.net else { return };
+        let credential =
+            serde_json::json!({ "name": name, "password": password, "register": register });
+        let handle = netplay_client::connect(&net.url, &name, credential, net.proxy.clone());
+        crate::config::save_username(&name);
+        self.session.start_connecting(handle);
     }
 
     pub fn on_net_event(&mut self, event: NetEvent) -> bool {
@@ -185,7 +245,11 @@ impl WindowState {
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
-        if self.session.is_lobby() {
+        if self.session.is_login() {
+            self.render_login(&mut encoder, &view);
+            self.queue.submit(std::iter::once(encoder.finish()));
+            frame.present();
+        } else if self.session.is_lobby() {
             self.render_lobby(&mut encoder, &view);
             self.queue.submit(std::iter::once(encoder.finish()));
             frame.present();
@@ -196,6 +260,23 @@ impl WindowState {
             if self.session.is_animating() {
                 self.request_redraw();
             }
+        }
+    }
+
+    fn render_login(&mut self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
+        let ppp = self.window.scale_factor() as f32;
+        let size = [self.config.width, self.config.height];
+        let mut actions = Vec::new();
+        {
+            let egui = &mut self.egui;
+            let form = self.session.login_form_mut();
+            egui.render(&self.device, &self.queue, encoder, view, size, ppp, |ctx| {
+                crate::login::ui(ctx, form, &mut actions);
+            });
+        }
+        for action in actions {
+            let crate::login::LoginAction::Submit { register } = action;
+            self.submit_login(register);
         }
     }
 
@@ -243,4 +324,23 @@ impl WindowState {
         });
         self.renderer.draw(&mut pass);
     }
+}
+
+/// Map the editing keys a text field needs from winit to egui (typed characters
+/// come through `KeyEvent::text` instead).
+fn to_egui_key(key: &Key) -> Option<egui::Key> {
+    Some(match key {
+        Key::Named(NamedKey::Backspace) => egui::Key::Backspace,
+        Key::Named(NamedKey::Delete) => egui::Key::Delete,
+        Key::Named(NamedKey::Enter) => egui::Key::Enter,
+        Key::Named(NamedKey::Tab) => egui::Key::Tab,
+        Key::Named(NamedKey::ArrowLeft) => egui::Key::ArrowLeft,
+        Key::Named(NamedKey::ArrowRight) => egui::Key::ArrowRight,
+        Key::Named(NamedKey::ArrowUp) => egui::Key::ArrowUp,
+        Key::Named(NamedKey::ArrowDown) => egui::Key::ArrowDown,
+        Key::Named(NamedKey::Home) => egui::Key::Home,
+        Key::Named(NamedKey::End) => egui::Key::End,
+        Key::Named(NamedKey::Escape) => egui::Key::Escape,
+        _ => return None,
+    })
 }

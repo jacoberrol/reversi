@@ -225,9 +225,11 @@ name + password. Open registration (anyone can create an account). Reverses two 
   authenticator handles login (`{name,password}`) and register (`{...,register:true}`, min 8-char
   password, unique name) and **drops the anonymous fallback** — every connection must be an account.
   New `AuthError::{BadLogin, NameTaken, WeakPassword}`. Server tests moved to register/login.
-- 🔮 **Increment 2 — Client login/register menu (egui).** A title screen with name + password and
-  Login / Create Identity, error display; connect with the account credential. Replaces `--name` and
-  the shared token in the client.
+- ✅ **Increment 2 — Client login/register menu (egui).** A `Screen::Login` title screen: name +
+  masked password, Log in / Create account, inline errors; connect fires on submit with the account
+  credential. Added keyboard→egui text-input plumbing (we skip egui-winit). Remembers the username
+  (per-OS config). `--name` removed; `netplay_client::connect` takes the credential directly.
+  `just login-frame` renders it offscreen.
 - 🔮 **Increment 3 — Delete the shared token.** Remove `SharedTokenCredential`/`DEV_*`,
   `SharedTokenAuth`, `NETPLAY_TOKENS`/`NETPLAY_TOKEN`, and the `rotate-token`/`set-token` plumbing;
   update docs. `just deploy` no longer needs `NETPLAY_TOKENS`.
@@ -360,3 +362,9 @@ Record notable plan/scope changes here so the "why" survives.
   (`{...,register:true}` → `store::create_account`, min 8-char password, unique name). Open
   registration. New `AuthError::{BadLogin,NameTaken,WeakPassword}`; server tests moved to
   register/login. Client still ships the shared token until increment 2 — don't deploy this alone.
+- 2026-07-19 — Stage 11 increment 2: client login/register screen. New `Screen::Login` (egui): name +
+  masked password, Log in / Create account, inline auth errors; connect fires on submit with the
+  `{name,password,register?}` credential. Added keyboard→egui text-input plumbing (winit `KeyEvent` →
+  `Event::Text`/editing keys) since we skip egui-winit. Remembers the username (`directories` config).
+  `--name` gone; `netplay_client::connect` now takes the credential; `just login-frame` +
+  `login_frame` example. `just online`/`play`/`demo` no longer pass a name.

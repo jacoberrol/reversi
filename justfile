@@ -32,10 +32,10 @@ run:
 serve ADDR="127.0.0.1:5000":
     cargo run -p netplay-server -- {{ADDR}}
 
-# Launch the game against a specific relay by WebSocket URL.
-# `URL` is ws://host:port locally, or wss://host for a TLS-fronted deploy.
-play URL="ws://127.0.0.1:5000" NAME="Player":
-    cargo run -p app -- --server {{URL}} --name {{NAME}}
+# Launch the game against a specific relay by WebSocket URL (opens the login
+# screen). `URL` is ws://host:port locally, or wss://host for a TLS-fronted deploy.
+play URL="ws://127.0.0.1:5000":
+    cargo run -p app -- --server {{URL}}
 
 # Prompts for a token (no echo) and stores it in the macOS login Keychain.
 # Owners mint tokens with `just rotate-token` instead.
@@ -75,12 +75,10 @@ set-admin NAME:
     echo "set NETPLAY_ADMIN for admin '{{NAME}}'"
     echo "next: 'just deploy' to seed/rotate the admin on the relay"
 
-# The token comes from an already-set NETPLAY_TOKEN, else the Keychain (see
-# `just set-token`), else the dev default (which the deployed relay rejects).
-# Play against the public relay (baked-in wss:// URL) — no local server needed.
-online NAME="Player":
-    NETPLAY_TOKEN="${NETPLAY_TOKEN:-$(security find-generic-password -s netplay-token -w 2>/dev/null || true)}" \
-      cargo run -p app -- --online --name {{NAME}}
+# Play against the public relay (baked-in wss:// URL). Opens the login screen —
+# log in or create an account. No local server needed.
+online:
+    cargo run -p app -- --online
 
 # Deploy the relay to the exe.dev VM (manual GitHub Actions workflow).
 # Requires the DEPLOY_SSH_KEY and NETPLAY_TOKENS repo secrets — see deploy/README.md.
@@ -97,9 +95,9 @@ asyncapi URL="https://relay.netplay.oliverj.network":
     curl -fsS {{URL}}/asyncapi.json | { jq . 2>/dev/null || cat; }
 
 # Stops the server automatically when both windows close (or on Ctrl-C). Uses
-# port 5099 to avoid clashing with a manual `just serve`. In one window click
-# Invite next to the other player; in the other, click Accept.
-# One-shot local multiplayer test: a relay plus two lobby windows.
+# port 5099 to avoid clashing with a manual `just serve`. Each window shows the
+# login screen — create two accounts (e.g. Alice / Bob), then invite + accept.
+# One-shot local multiplayer test: a relay plus two game windows.
 demo:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -110,12 +108,12 @@ demo:
     server_pid=$!
     trap 'kill "${server_pid}" 2>/dev/null || true' EXIT
     sleep 1
-    echo "opening two windows (Alice, Bob) against ${addr}"
-    ./target/debug/app --server "ws://${addr}" --name Alice &
-    alice=$!
-    ./target/debug/app --server "ws://${addr}" --name Bob &
-    bob=$!
-    wait "${alice}" "${bob}"
+    echo "opening two windows against ${addr} — register two accounts to play"
+    ./target/debug/app --server "ws://${addr}" &
+    one=$!
+    ./target/debug/app --server "ws://${addr}" &
+    two=$!
+    wait "${one}" "${two}"
 
 # Pre-commit gate: formatting must be clean and clippy must be warning-free.
 # `-D warnings` promotes every clippy lint to an error. Must pass before commit.
@@ -140,6 +138,10 @@ frame:
 # Render the egui lobby mockup offscreen to target/lobby.png (look-and-feel spike).
 lobby-frame:
     cargo run -q -p app --example lobby_frame
+
+# Render the login screen offscreen to target/login.png.
+login-frame:
+    cargo run -q -p app --example login_frame
 
 # Rebuild the texture atlas from assets/src/ via the Aseprite CLI.
 # Wired to the real Aseprite pipeline in a later stage.
