@@ -241,10 +241,13 @@ fn server_msg_to_event(msg: ServerMsg) -> Option<NetEvent> {
         ServerMsg::Game { payload } => NetEvent::Game(payload),
         ServerMsg::OpponentLeft => NetEvent::OpponentLeft,
         ServerMsg::Error { message } => NetEvent::Error(message),
-        // Admin/control replies are for admin tools, not the game client.
-        ServerMsg::Players { .. } | ServerMsg::Matches { .. } | ServerMsg::Stats { .. } => {
-            return None
-        }
+        // Admin/control messages are for admin tools, not the game client.
+        ServerMsg::Players { .. }
+        | ServerMsg::Matches { .. }
+        | ServerMsg::Stats { .. }
+        | ServerMsg::PlayerJoined { .. }
+        | ServerMsg::PlayerLeft { .. }
+        | ServerMsg::MatchStarted { .. } => return None,
     })
 }
 

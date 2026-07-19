@@ -276,6 +276,11 @@ async fn relay(
                     break;
                 }
             }
+            ClientMsg::SubscribeEvents => {
+                if lobby_tx.send(LobbyCmd::Subscribe { id }).await.is_err() {
+                    break;
+                }
+            }
             ClientMsg::Hello { .. } => continue, // ignore a stray second Hello
         }
     }

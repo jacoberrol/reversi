@@ -198,8 +198,9 @@ contract while keeping serde/JSON (readable; we own both ends).
 - ✅ **Increment 3a — Admin queries (dev, no RBAC).** `ListPlayers`/`ListMatches`/`GetStats`
   request-reply messages, answered from the lobby actor (oneshot round-trip). In the published
   `/schema`. RBAC stays on the backlog.
-- 🔮 **Increment 3b — Admin event stream.** `SubscribeEvents` → live push of player joined/left and
-  match started, so the TUI updates without polling. Lobby broadcasts to registered subscribers.
+- ✅ **Increment 3b — Admin event stream.** `SubscribeEvents` → live push of `PlayerJoined`/
+  `PlayerLeft`/`MatchStarted`, so the TUI updates without polling. The lobby marks subscribed
+  connections and broadcasts events to them. In the published `/schema`.
 
 **Deferred:** user accounts / persistent identity (the moment durable identity enters, the server
 gains a **DB** and stops being a stateless relay — the biggest inflection; lands behind the same
@@ -300,3 +301,6 @@ Record notable plan/scope changes here so the "why" survives.
   actor answers via a oneshot round-trip and now tracks each player's seat + a start `Instant` for
   uptime. The game client ignores admin replies. Tested end-to-end (match two players, a third
   connection queries state).
+- 2026-07-18 — Stage 9 increment 3b: admin event stream. `SubscribeEvents` marks a connection
+  subscribed; the lobby pushes `PlayerJoined`/`PlayerLeft`/`MatchStarted` to subscribers as they
+  happen. Tested end-to-end (subscribe, then observe a join, a match, and a leave).
