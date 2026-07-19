@@ -154,9 +154,11 @@ can use, split into `netplay-protocol` / `netplay-server` / `netplay-client`. Th
   player type (Reversi: seat 0 = Black). Keeps the relay game-agnostic.
 - Stays a workspace-internal crate (no separate repo / published crate until a second consumer
   justifies the versioning overhead).
-- **Auth is a seam (Stage 8B, done).** `Hello` carries an opaque credential; the server's
-  `Authenticator::verify` runs before the client joins the lobby, the client's `AuthProvider` fills
-  the credential. `SharedTokenAuth`/`SharedToken` (versioned token, `NETPLAY_TOKENS` env or dev
+- **Auth is a seam (Stage 8B, done).** `Hello` carries an opaque credential — **arbitrary JSON** the
+  authenticator interprets (`{key_id, token}` for the reference scheme), not a byte blob, so a Go
+  client sends a normal object. The server's `Authenticator::verify` runs before the client joins the
+  lobby; the client's `AuthProvider` fills the credential. The relay never inspects it, so the shape
+  can change (attestation) without touching the envelope. `SharedTokenAuth`/`SharedToken` (versioned token, `NETPLAY_TOKENS` env or dev
   default) is the reference impl; attestation swaps in behind the unchanged trait later. Honest
   threat model: deterrence, not tamper-proofing (a client can't keep a secret).
 - **Rate limiting (Stage 8C, done).** Server-side, before the lobby, drop-and-log: a handshake
