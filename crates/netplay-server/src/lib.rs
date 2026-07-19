@@ -1,31 +1,32 @@
-//! Reusable relay/matchmaking server library.
+//! Reusable relay/matchmaking server library (WebSocket transport).
 //!
-//! [`serve`] accepts client connections, runs a lobby (presence + invites), and
-//! relays paired players' opaque game payloads. Each connection is a tokio task;
-//! a per-player writer task drains an outbox channel to the socket, and the
-//! [`lobby`] task owns all matchmaking state. Game-agnostic — it never decodes
-//! the payload. Splitting this from the binary lets integration tests drive a
-//! real server on an ephemeral port.
+//! [`serve`] accepts WebSocket connections, authorizes and rate-limits them,
+//! runs a lobby (presence + invites), and relays paired players' opaque game
+//! payloads. TLS is handled by a front proxy at deploy time; this server speaks
+//! plain `ws://`. Game-agnostic — it never decodes the payload.
 
 pub mod auth;
 pub mod limits;
 pub mod lobby;
 
-use std::io;
 use std::sync::{Arc, Mutex};
 
 use auth::Authenticator;
+use futures_util::stream::{SplitSink, SplitStream};
+use futures_util::{SinkExt, StreamExt};
 use limits::{IpGuard, IpLimiter};
 use lobby::LobbyCmd;
-use netplay_protocol::{ClientMsg, ServerMsg, MAX_FRAME, PROTOCOL_VERSION};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
+use netplay_protocol::{ClientMsg, ServerMsg, MAX_MESSAGE, PROTOCOL_VERSION};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, oneshot};
+use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::WebSocketStream;
 
-/// Accept and serve connections on `listener`, authorizing each with `auth`,
-/// until it errors fatally. Runs the lobby task internally; never returns under
-/// normal operation.
+type WsSink = SplitSink<WebSocketStream<TcpStream>, Message>;
+type WsSource = SplitStream<WebSocketStream<TcpStream>>;
+
+/// Accept and serve WebSocket connections on `listener`, authorizing each with
+/// `auth`. Runs the lobby task internally; never returns under normal operation.
 pub async fn serve(listener: TcpListener, auth: Arc<dyn Authenticator>) {
     let (lobby_tx, lobby_rx) = mpsc::channel(64);
     tokio::spawn(lobby::run(lobby_rx));
@@ -56,23 +57,38 @@ pub async fn serve(listener: TcpListener, auth: Arc<dyn Authenticator>) {
     }
 }
 
-/// Handle one client: handshake, authorize, join the lobby, then relay.
+type BoxError = Box<dyn std::error::Error + Send + Sync>;
+
+/// Handle one client: WebSocket handshake, authorize, join the lobby, then relay.
 async fn handle(
     stream: TcpStream,
     lobby_tx: mpsc::Sender<LobbyCmd>,
     auth: Arc<dyn Authenticator>,
-) -> io::Result<()> {
-    let (mut read_half, write_half) = stream.into_split();
-    let (outbox, out_rx) = mpsc::channel::<ServerMsg>(32);
-    tokio::spawn(writer(write_half, out_rx));
+) -> Result<(), BoxError> {
+    // The WebSocket upgrade must complete within the handshake window.
+    let ws = match tokio::time::timeout(
+        limits::HANDSHAKE_TIMEOUT,
+        tokio_tungstenite::accept_async(stream),
+    )
+    .await
+    {
+        Ok(result) => result?,
+        Err(_) => {
+            eprintln!("rate-limit: websocket handshake timed out");
+            return Ok(());
+        }
+    };
 
-    // The first frame must be a version-matching Hello, within the handshake
-    // window (guards against idle/slowloris sockets).
+    let (sink, mut source) = ws.split();
+    let (outbox, out_rx) = mpsc::channel::<ServerMsg>(32);
+    tokio::spawn(writer(sink, out_rx));
+
+    // The first message must be a version-matching Hello, within the window.
     let first =
-        match tokio::time::timeout(limits::HANDSHAKE_TIMEOUT, read_client(&mut read_half)).await {
-            Ok(result) => result?,
+        match tokio::time::timeout(limits::HANDSHAKE_TIMEOUT, next_client(&mut source)).await {
+            Ok(msg) => msg,
             Err(_) => {
-                eprintln!("rate-limit: handshake timed out");
+                eprintln!("rate-limit: hello timed out");
                 return Ok(());
             }
         };
@@ -88,7 +104,7 @@ async fn handle(
                 .await;
             return Ok(());
         }
-        _ => return Ok(()), // no Hello, or the peer closed
+        _ => return Ok(()),
     };
 
     // Authorize before the client can touch the lobby.
@@ -114,14 +130,12 @@ async fn handle(
     }
     let id = match reply_rx.await {
         Ok(Some(id)) => id,
-        // Rejected (lobby full) or the lobby is gone.
         Ok(None) | Err(_) => return Ok(()),
     };
 
-    // Forward the client's lobby/game messages until it disconnects, metering
-    // the inbound rate.
+    // Relay the client's messages until it disconnects, metering the inbound rate.
     let mut inbound = limits::message_bucket();
-    while let Some(msg) = read_client(&mut read_half).await? {
+    while let Some(msg) = next_client(&mut source).await {
         if !inbound.try_take() {
             let _ = outbox
                 .send(ServerMsg::Error("rate exceeded".to_string()))
@@ -151,37 +165,40 @@ async fn handle(
     Ok(())
 }
 
-/// Drain outgoing messages to the socket as length-delimited frames.
-async fn writer(mut write_half: OwnedWriteHalf, mut rx: mpsc::Receiver<ServerMsg>) {
+/// Drain outgoing messages to the socket as WebSocket binary messages.
+async fn writer(mut sink: WsSink, mut rx: mpsc::Receiver<ServerMsg>) {
     while let Some(msg) = rx.recv().await {
-        if write_half
-            .write_all(&netplay_protocol::encode(&msg))
+        if sink
+            .send(Message::binary(netplay_protocol::to_bytes(&msg)))
             .await
             .is_err()
         {
             break;
         }
     }
+    let _ = sink.close().await;
 }
 
-/// Read one framed [`ClientMsg`], or `None` on a clean disconnect.
-async fn read_client(read_half: &mut OwnedReadHalf) -> io::Result<Option<ClientMsg>> {
-    let mut len_buf = [0u8; 4];
-    match read_half.read_exact(&mut len_buf).await {
-        Ok(_) => {}
-        Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
-        Err(e) => return Err(e),
+/// Read the next [`ClientMsg`], or `None` on close / error / malformed input.
+async fn next_client(source: &mut WsSource) -> Option<ClientMsg> {
+    loop {
+        match source.next().await? {
+            Ok(Message::Binary(bytes)) => {
+                if bytes.len() > MAX_MESSAGE {
+                    return None;
+                }
+                return netplay_protocol::decode::<ClientMsg>(&bytes).ok();
+            }
+            Ok(Message::Text(text)) => {
+                if text.len() > MAX_MESSAGE {
+                    return None;
+                }
+                return netplay_protocol::decode::<ClientMsg>(text.as_bytes()).ok();
+            }
+            Ok(Message::Close(_)) => return None,
+            // Ping/Pong/Frame — tungstenite handles keepalive itself.
+            Ok(_) => continue,
+            Err(_) => return None,
+        }
     }
-    let len = u32::from_be_bytes(len_buf) as usize;
-    if len > MAX_FRAME {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "frame too large",
-        ));
-    }
-    let mut body = vec![0u8; len];
-    read_half.read_exact(&mut body).await?;
-    netplay_protocol::decode::<ClientMsg>(&body)
-        .map(Some)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }

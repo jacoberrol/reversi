@@ -174,9 +174,13 @@ tamper-proof.
 - ✅ **Stage C — Rate limiting.** Handshake timeout (~5s), per-IP concurrency + new-connection rate
   (`IpLimiter`), per-connection inbound message bucket, lobby player cap. All tunable `const`s in
   `netplay-server::limits`; drop + log. (Invite spam is covered by the message bucket.)
-- 🔮 **Stage D — TLS + WebSocket transport swap** (executes DESIGN §9; the old "deploy" increment).
-  Makes the token respectable and unblocks internet deploy; payloads unchanged. B and C can land
-  before D; D is the prerequisite for calling the token production-respectable.
+- ✅ **Stage D1 — WebSocket transport swap.** Server (`tokio-tungstenite`, plain `ws://`) and client
+  (WebSocket on a tokio runtime confined to the network thread; winit loop stays sync) speak WebSocket;
+  `--server` is now a URL (`ws://…` local, `wss://…` deployed). Protocol messages unchanged; length
+  framing replaced by WS message delimiting. Relay test rewritten over WS. Testable on localhost.
+- 🔮 **Stage D2 — Deploy (netplay.exe.xyz).** Ansible playbook (systemd service, `NETPLAY_TOKENS` env)
+  + a manual-dispatch GitHub Actions deploy workflow using GH Secrets (SSH key, token). TLS is
+  terminated by the VPS proxy, which forwards `wss://` → `ws://` on the VM port. I prepare; owner triggers.
 - 🔮 **Stage E (later) — Attestation.** Swap `AuthProvider` to App Attest (iOS) / Play Integrity
   (Android) behind the unchanged seam. Web-distributed macOS stays at token+TLS deterrence.
 
@@ -250,3 +254,6 @@ Record notable plan/scope changes here so the "why" survives.
 - 2026-07-18 — Stage 8C done: server-side rate limiting (`netplay-server::limits`). Handshake timeout,
   per-IP concurrency + connection-rate (`IpLimiter`), per-connection message token bucket, lobby player
   cap. Drop-and-log; tunable consts. Added tokio `time` feature. Unit-tested.
+- 2026-07-18 — Stage 8D1 done: WebSocket transport. Server on `tokio-tungstenite` (plain ws); client on
+  WebSocket over a tokio runtime confined to the network thread (winit loop stays sync — revised the
+  "client fully async-free" note). `--server` is now a ws/wss URL. Protocol unchanged; relay test over WS.

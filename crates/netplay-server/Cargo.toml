@@ -10,3 +10,11 @@ license.workspace = true
 [dependencies]
 netplay-protocol.workspace = true
 tokio.workspace = true
+# Plain WebSocket (no TLS — the deploy proxy terminates TLS and forwards ws://).
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["handshake"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink"] }
+
+[dev-dependencies]
+# The relay test drives the server over WebSocket.
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "handshake"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink"] }

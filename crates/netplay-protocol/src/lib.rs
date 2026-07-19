@@ -6,11 +6,9 @@
 //! puts the bytes in that payload. Players are identified by an abstract
 //! [`Seat`] (seat 0 moves first); the game maps seat to its own player type.
 //!
-//! Framing is length-delimited: a big-endian `u32` byte count followed by that
-//! many bytes of JSON (envelope) — tiny messages, easy to eyeball. Swappable for
-//! a binary codec later without touching call sites.
-
-use std::io::{self, Read, Write};
+//! Each message is one JSON document; the transport (WebSocket) delimits them,
+//! so there's no explicit framing here — just [`to_bytes`]/[`decode`]. Swappable
+//! for a binary codec later without touching call sites.
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -19,9 +17,9 @@ use serde::{Deserialize, Serialize};
 /// [`ClientMsg::Hello`] whose `protocol` doesn't match.
 pub const PROTOCOL_VERSION: u16 = 1;
 
-/// Reject frames larger than this (messages are tiny; this guards against a bad
-/// or hostile length prefix causing a huge allocation).
-pub const MAX_FRAME: usize = 1 << 16;
+/// Reject WebSocket messages larger than this (messages are tiny; this guards
+/// against a hostile client sending a huge frame).
+pub const MAX_MESSAGE: usize = 1 << 16;
 
 /// A connected player, for the lifetime of its connection.
 pub type PlayerId = u64;
@@ -109,57 +107,22 @@ pub enum ServerMsg {
     Error(String),
 }
 
-/// Encode a message as a length-delimited frame.
-pub fn encode<T: Serialize>(msg: &T) -> Vec<u8> {
-    let body = serde_json::to_vec(msg).expect("protocol messages always serialize");
-    let mut frame = Vec::with_capacity(4 + body.len());
-    frame.extend_from_slice(&(body.len() as u32).to_be_bytes());
-    frame.extend_from_slice(&body);
-    frame
+/// Serialize a message to bytes (the body of one WebSocket message).
+pub fn to_bytes<T: Serialize>(msg: &T) -> Vec<u8> {
+    serde_json::to_vec(msg).expect("protocol messages always serialize")
 }
 
-/// Decode a message from a frame body.
-pub fn decode<T: DeserializeOwned>(body: &[u8]) -> serde_json::Result<T> {
-    serde_json::from_slice(body)
-}
-
-/// Read one length-delimited frame body from a blocking reader. Returns
-/// `Ok(None)` on a clean EOF at a frame boundary (peer closed the connection).
-pub fn read_frame(reader: &mut impl Read) -> io::Result<Option<Vec<u8>>> {
-    let mut len_buf = [0u8; 4];
-    match reader.read_exact(&mut len_buf) {
-        Ok(()) => {}
-        Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
-        Err(e) => return Err(e),
-    }
-    let len = u32::from_be_bytes(len_buf) as usize;
-    if len > MAX_FRAME {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "frame too large",
-        ));
-    }
-    let mut body = vec![0u8; len];
-    reader.read_exact(&mut body)?;
-    Ok(Some(body))
-}
-
-/// Write a message as a length-delimited frame to a blocking writer.
-pub fn write_msg<T: Serialize>(writer: &mut impl Write, msg: &T) -> io::Result<()> {
-    writer.write_all(&encode(msg))
+/// Parse a message from a WebSocket message body.
+pub fn decode<T: DeserializeOwned>(bytes: &[u8]) -> serde_json::Result<T> {
+    serde_json::from_slice(bytes)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Cursor;
 
     fn round_trip_client(msg: ClientMsg) {
-        let mut buf = Vec::new();
-        write_msg(&mut buf, &msg).unwrap();
-        let mut cursor = Cursor::new(buf);
-        let body = read_frame(&mut cursor).unwrap().expect("a frame");
-        let decoded: ClientMsg = decode(&body).unwrap();
+        let decoded: ClientMsg = decode(&to_bytes(&msg)).unwrap();
         assert_eq!(decoded, msg);
     }
 
@@ -208,19 +171,9 @@ mod tests {
             ServerMsg::OpponentLeft,
             ServerMsg::Error("bad version".into()),
         ] {
-            let mut buf = Vec::new();
-            write_msg(&mut buf, &msg).unwrap();
-            let mut cursor = Cursor::new(buf);
-            let body = read_frame(&mut cursor).unwrap().expect("a frame");
-            let decoded: ServerMsg = decode(&body).unwrap();
+            let decoded: ServerMsg = decode(&to_bytes(&msg)).unwrap();
             assert_eq!(decoded, msg);
         }
-    }
-
-    #[test]
-    fn clean_eof_returns_none() {
-        let mut empty = Cursor::new(Vec::new());
-        assert!(read_frame(&mut empty).unwrap().is_none());
     }
 
     #[test]

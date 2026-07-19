@@ -10,3 +10,8 @@ license.workspace = true
 [dependencies]
 netplay-protocol.workspace = true
 winit.workspace = true
+# WebSocket over TLS (wss://), on a tokio runtime confined to the network thread.
+# The winit event loop stays synchronous; this runtime never touches it.
+tokio = { workspace = true, features = ["rt", "macros"] }
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink"] }

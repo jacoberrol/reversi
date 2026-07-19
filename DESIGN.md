@@ -116,15 +116,18 @@ Rust server on a cloud VM. We build the real topology now and stage toward that.
 - **A shared `protocol` crate (serde).** One source of truth for the wire format, reused by
   the client and the server. Primitive fields only (a move is a `u8`), so `game-core` never
   gains a serialization dependency and the server never depends on game logic.
-- **Server: tokio; client: async-free.** The relay is a separate binary and uses tokio
-  (per-connection tasks + an in-memory lobby actor). The client keeps CLAUDE.md's "no async
-  runtime": one blocking TCP connection, a background read thread feeding the winit event
-  loop via `EventLoopProxy`, `TcpStream::try_clone` for a lock-free read/write split.
-- **Transport is swappable behind the connection seam.** Raw TCP + length-delimited JSON
-  frames now (localhost). WebSocket + TLS at internet-deploy time (firewall traversal over
-  443) — reusing the same `protocol` payloads, so game code is untouched. WebSocket, not
-  gRPC: gRPC would force tokio onto the client and buys little for two Rust peers swapping
-  one-byte moves.
+- **The winit loop stays synchronous; networking uses a runtime off to the side.** The relay
+  (`netplay-server`) uses tokio (per-connection tasks + an in-memory lobby actor). The client
+  runs its WebSocket on a **single-thread tokio runtime confined to a dedicated network thread**,
+  feeding the winit loop via `EventLoopProxy` and reading an outgoing channel — the runtime never
+  touches the main loop. (Originally the client was fully runtime-free over blocking TCP; the
+  WebSocket-over-TLS transport made a background runtime the clean choice, so we revised that
+  decision — the *intent*, "don't entangle the winit loop with async," still holds.)
+- **Transport is swappable behind the connection seam; now WebSocket (Stage 8D1).** Messages are
+  serialized JSON, delimited by WebSocket. `ws://` on localhost; **`wss://` in production, with TLS
+  terminated by the VPS proxy** which forwards to a plain-`ws://` port on the VM. `--server` is a
+  URL. WebSocket, not gRPC: it traverses firewalls over 443 and doesn't force a heavier stack for
+  two Rust peers swapping tiny messages.
 
 ### Reusable netplay layer (extracted, Stage 8A)
 The relay/lobby/transport is a **game-agnostic layer** any 2-player turn-based game in the workspace
