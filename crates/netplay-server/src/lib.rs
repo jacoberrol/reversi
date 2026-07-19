@@ -72,7 +72,14 @@ async fn handle(
     )
     .await
     {
-        Ok(result) => result?,
+        Ok(Ok(ws)) => ws,
+        // Not a WebSocket handshake — a health check, scanner, or plain HTTP
+        // probe. Expected on a public endpoint; refuse quietly rather than
+        // logging it as a connection error.
+        Ok(Err(e)) => {
+            println!("ignored non-websocket connection: {e}");
+            return Ok(());
+        }
         Err(_) => {
             eprintln!("rate-limit: websocket handshake timed out");
             return Ok(());
