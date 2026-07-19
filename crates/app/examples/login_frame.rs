@@ -4,10 +4,10 @@
 
 use std::io::Cursor;
 
-use app::login::{self, LoginAction, LoginForm};
+use app::login::{self, LoginAction, LoginForm, Mode};
 
 const WIDTH: u32 = 720;
-const HEIGHT: u32 = 900;
+const HEIGHT: u32 = 1040;
 const PPP: f32 = 2.0;
 
 fn main() {
@@ -54,8 +54,12 @@ fn main() {
     app::lobby::apply_theme(&ctx);
     ctx.set_pixels_per_point(PPP);
 
-    // The initial state: empty fields show the grey "username"/"password" hints.
-    let mut form = LoginForm::default();
+    // Render the create-account screen (three fields) to inspect it; empty
+    // fields show the grey hints. Flip to `Mode::Login` for the log-in form.
+    let mut form = LoginForm {
+        mode: Mode::Register,
+        ..Default::default()
+    };
     let mut actions: Vec<LoginAction> = Vec::new();
 
     let raw = egui::RawInput {

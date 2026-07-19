@@ -200,18 +200,29 @@ impl WindowState {
         if self.session.login_connecting() {
             return;
         }
-        let (name, password) = {
+        let (name, password, confirm) = {
             let form = self.session.login_form();
-            (form.name.trim().to_string(), form.password.clone())
+            (
+                form.name.trim().to_string(),
+                form.password.clone(),
+                form.confirm.clone(),
+            )
         };
         if name.is_empty() {
             self.session.login_error("enter a username".to_string());
             return;
         }
-        if register && password.len() < 8 {
-            self.session
-                .login_error("password too short (min 8 characters)".to_string());
-            return;
+        if register {
+            if password.len() < 8 {
+                self.session
+                    .login_error("password too short (min 8 characters)".to_string());
+                return;
+            }
+            if password != confirm {
+                self.session
+                    .login_error("passwords don't match".to_string());
+                return;
+            }
         }
         let Some(net) = &self.net else { return };
         let credential =
