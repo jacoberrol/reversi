@@ -1,7 +1,7 @@
 name: Deploy relay
 
 # Manual trigger only — you click "Run workflow" (or `just deploy`). Never runs
-# on push. Requires the DEPLOY_SSH_KEY and NETPLAY_TOKENS repository secrets.
+# on push. Requires the DEPLOY_SSH_KEY and NETPLAY_ADMIN repository secrets.
 on:
   workflow_dispatch:
 
@@ -35,7 +35,6 @@ jobs:
         working-directory: deploy/ansible
         env:
           # Read while rendering netplay.env.j2 (kept off the command line).
-          NETPLAY_TOKENS: ${{ secrets.NETPLAY_TOKENS }}
           NETPLAY_ADMIN: ${{ secrets.NETPLAY_ADMIN }}
           BINARY_SRC: ${{ github.workspace }}/target/x86_64-unknown-linux-musl/release/netplay-server
         run: |

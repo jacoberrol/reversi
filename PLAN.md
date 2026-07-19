@@ -230,9 +230,10 @@ name + password. Open registration (anyone can create an account). Reverses two 
   credential. Added keyboard→egui text-input plumbing (we skip egui-winit). Remembers the username
   (per-OS config). `--name` removed; `netplay_client::connect` takes the credential directly.
   `just login-frame` renders it offscreen.
-- 🔮 **Increment 3 — Delete the shared token.** Remove `SharedTokenCredential`/`DEV_*`,
-  `SharedTokenAuth`, `NETPLAY_TOKENS`/`NETPLAY_TOKEN`, and the `rotate-token`/`set-token` plumbing;
-  update docs. `just deploy` no longer needs `NETPLAY_TOKENS`.
+- ✅ **Increment 3 — Delete the shared token.** Removed `SharedTokenCredential`/`DEV_*`,
+  `SharedTokenAuth`, `AuthProvider`/`SharedToken`, the `NETPLAY_TOKENS`/`NETPLAY_TOKEN` env, and the
+  `rotate-token`/`set-token` recipes; dropped the dead `AuthError::{UnknownKey,BadToken}`. `just deploy`
+  no longer needs the `NETPLAY_TOKENS` secret (env template/workflow updated); docs updated.
 
 **Deferred:** separate repo / published crate (until a second consumer exists); N-player /
 spectating / reconnect; client async / WASM browser client.
@@ -368,3 +369,9 @@ Record notable plan/scope changes here so the "why" survives.
   `Event::Text`/editing keys) since we skip egui-winit. Remembers the username (`directories` config).
   `--name` gone; `netplay_client::connect` now takes the credential; `just login-frame` +
   `login_frame` example. `just online`/`play`/`demo` no longer pass a name.
+- 2026-07-19 — Stage 11 increment 3: removed the shared-token machinery now that auth is
+  accounts-only. Deleted `SharedTokenCredential`/`DEV_*` (protocol), `SharedTokenAuth`
+  (server), `AuthProvider`/`SharedToken` (client), the `NETPLAY_TOKENS`/`NETPLAY_TOKEN`
+  env + `rotate-token`/`set-token` recipes, and the dead `AuthError::{UnknownKey,BadToken}`.
+  `just deploy` drops the `NETPLAY_TOKENS` secret (env template + workflow); DESIGN/deploy docs
+  updated. Stage 11 complete.

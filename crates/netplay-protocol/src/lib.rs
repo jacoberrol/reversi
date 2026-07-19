@@ -55,40 +55,6 @@ pub struct ServerStats {
     pub uptime_seconds: u64,
 }
 
-/// The reference authorization scheme's credential: a versioned shared token.
-/// `key_id` selects which key the server checks against, so keys can rotate
-/// (old + new coexist during rollout). This is the credential *format* both the
-/// client provider and the server's authenticator agree on; the relay itself
-/// treats the credential as opaque bytes (see [`ClientMsg::Hello`]).
-///
-/// Threat model: a client cannot keep a secret — this deters anonymous clients,
-/// it is not tamper-proofing. Real closure comes from attestation later, behind
-/// the same seam.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct SharedTokenCredential {
-    pub key_id: u16,
-    pub token: String,
-}
-
-impl SharedTokenCredential {
-    /// Encode as the opaque credential value carried in [`ClientMsg::Hello`]. The
-    /// relay never interprets it; the authenticator decodes it back.
-    pub fn to_value(&self) -> serde_json::Value {
-        serde_json::to_value(self).expect("credential always serializes")
-    }
-
-    pub fn from_value(value: &serde_json::Value) -> Option<Self> {
-        serde_json::from_value(value.clone()).ok()
-    }
-}
-
-/// Development key id / token. A convenience default so `just serve`/`just play`
-/// work out of the box; **override in production** (the server injects real keys,
-/// the app ships its own token).
-pub const DEV_KEY_ID: u16 = 1;
-pub const DEV_TOKEN: &str = "reversi-dev-token";
-
 /// A message from a client to the server.
 ///
 /// Internally tagged: each message serializes as a flat JSON object with a
@@ -100,8 +66,8 @@ pub const DEV_TOKEN: &str = "reversi-dev-token";
 pub enum ClientMsg {
     /// First message on connect: the player's display name, protocol version,
     /// and an **opaque authorization credential** — arbitrary JSON the server's
-    /// authenticator interprets (the relay never inspects it). For the reference
-    /// token scheme it's `{"key_id":N,"token":"…"}`.
+    /// authenticator interprets (the relay never inspects it). For the account
+    /// scheme it's `{"name":"…","password":"…","register":true?}`.
     Hello {
         name: String,
         protocol: u16,
@@ -117,9 +83,8 @@ pub enum ClientMsg {
     /// An opaque in-game payload, to be relayed to the opponent verbatim.
     Game { payload: Vec<u8> },
 
-    // Admin/control requests. During development any authorized connection may
-    // send these; before non-dev use they must be gated by an admin role (see
-    // DESIGN §9 and the RBAC backlog item). Each has a matching reply below.
+    // Admin/control requests. Gated by an admin-role account (see DESIGN §9);
+    // non-admins are refused. Each has a matching reply below.
     /// List every connected player.
     ListPlayers,
     /// List every active match.
@@ -215,8 +180,8 @@ fn message_schema<T: schemars::JsonSchema>() -> serde_json::Value {
 fn opaque_credential_schema(_: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
     serde_json::from_value(serde_json::json!({
         "description": "Opaque authorization credential — arbitrary JSON the server's \
-            authenticator interprets (the relay never inspects it). Reference token \
-            scheme: {\"key_id\": <integer>, \"token\": <string>}.",
+            authenticator interprets (the relay never inspects it). Account scheme: \
+            {\"name\": <string>, \"password\": <string>, \"register\": <bool, optional>}.",
     }))
     .expect("valid schema")
 }
@@ -344,11 +309,7 @@ mod tests {
         round_trip_client(ClientMsg::Hello {
             name: "Jake".into(),
             protocol: PROTOCOL_VERSION,
-            credential: SharedTokenCredential {
-                key_id: DEV_KEY_ID,
-                token: DEV_TOKEN.into(),
-            }
-            .to_value(),
+            credential: serde_json::json!({ "name": "Jake", "password": "hunter2" }),
         });
         round_trip_client(ClientMsg::Invite { to: 7 });
         round_trip_client(ClientMsg::Accept { inviter: 7 });
@@ -473,22 +434,5 @@ mod tests {
         let text = d.to_string();
         assert!(text.contains("\"type\""));
         assert!(text.contains("Invite"));
-    }
-
-    #[test]
-    fn shared_token_credential_round_trips() {
-        let cred = SharedTokenCredential {
-            key_id: 3,
-            token: "abc".into(),
-        };
-        assert_eq!(
-            SharedTokenCredential::from_value(&cred.to_value()),
-            Some(cred)
-        );
-        // A value of the wrong shape isn't a credential.
-        assert_eq!(
-            SharedTokenCredential::from_value(&serde_json::json!("nope")),
-            None
-        );
     }
 }

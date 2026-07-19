@@ -158,13 +158,12 @@ can use, split into `netplay-protocol` / `netplay-server` / `netplay-client`. Th
   player type (Reversi: seat 0 = Black). Keeps the relay game-agnostic.
 - Stays a workspace-internal crate (no separate repo / published crate until a second consumer
   justifies the versioning overhead).
-- **Auth is a seam (Stage 8B, done).** `Hello` carries an opaque credential — **arbitrary JSON** the
-  authenticator interprets (`{key_id, token}` for the reference scheme), not a byte blob, so a Go
+- **Auth is a seam (Stage 8B).** `Hello` carries an opaque credential — **arbitrary JSON** the
+  authenticator interprets (`{name, password[, register]}` for accounts), not a byte blob, so a Go
   client sends a normal object. The server's `Authenticator::verify` runs before the client joins the
-  lobby; the client's `AuthProvider` fills the credential. The relay never inspects it, so the shape
-  can change (attestation) without touching the envelope. `SharedTokenAuth`/`SharedToken` (versioned token, `NETPLAY_TOKENS` env or dev
-  default) is the reference impl; attestation swaps in behind the unchanged trait later. Honest
-  threat model: deterrence, not tamper-proofing (a client can't keep a secret).
+  lobby; the relay never inspects the credential, so the shape can change (attestation) without
+  touching the envelope. The implementation is `DbAuth` — accounts-only (Stage 10/11 below); an
+  attestation authenticator could swap in behind the unchanged trait later.
 - **Rate limiting (Stage 8C, done).** Server-side, before the lobby, drop-and-log: a handshake
   timeout, per-IP concurrency + new-connection rate, a per-connection inbound message bucket, and a
   lobby player cap. Tunable consts in `netplay-server::limits`; auth and rate-limit are separate
@@ -172,13 +171,12 @@ can use, split into `netplay-protocol` / `netplay-server` / `netplay-client`. Th
 - **Deploy (Stage 8D2, done).** The relay runs on an exe.dev VM under `systemd`, bound to
   `127.0.0.1:8000`; the provider's proxy terminates TLS at `relay.netplay.oliverj.network` and
   forwards to it. The client bakes that `wss://` URL in as `DEFAULT_RELAY_URL` (`--online`);
-  `--server URL` overrides for local dev. The client's token comes from the `NETPLAY_TOKEN` env var
-  (dev default if unset), so the real shared secret is supplied at runtime, never baked into the
-  binary or the repo — a deterrence gate, matching the honest threat model above. Deploys are
+  `--server URL` overrides for local dev. Clients log in / register on the title screen — accounts-only,
+  no shared secret in the client (Stage 11). Deploys are
   **Ansible driven by a manual GitHub Actions
   workflow** (`deploy/`): CI builds a static `x86_64-unknown-linux-musl` binary (no toolchain on the
   VM, no glibc coupling) and the playbook installs it under a locked-down system user with a hardened
-  unit; the `NETPLAY_TOKENS` secret and a dedicated deploy SSH key live in GitHub Secrets. Chosen
+  unit; the `NETPLAY_ADMIN` secret and a dedicated deploy SSH key live in GitHub Secrets. Chosen
   over building on the VM (keeps the box minimal) and over a push-triggered deploy (production is
   hand-triggered). See `deploy/README.md`.
 

@@ -234,7 +234,7 @@ async fn admin_queries_report_players_matches_and_stats() {
 #[tokio::test]
 async fn non_admin_is_refused_the_admin_surface() {
     let (addr, _admin_cred, _dir) = start_server_with_admin().await;
-    // An anonymous player (shared token) — role Player, not admin.
+    // A registered player (role Player, not admin).
     let mut player = connect_ws(addr, "Randy", register("Randy", "password")).await;
     send(&mut player, ClientMsg::ListPlayers).await;
     // Gets an error, never a Players reply.
