@@ -8,6 +8,12 @@
 //!
 //! The in-game action is opaque here: [`NetHandle::game`] sends a `Vec<u8>` and
 //! [`NetEvent::Game`] delivers one. The game defines and codes its own payload.
+//!
+//! Auth lives in [`auth`]: log in / register over REST for a bearer token, which
+//! the WebSocket [`ClientMsg::Hello`] then presents. [`login_and_connect`] chains
+//! the two on the network thread so the caller supplies name + password once.
+
+pub mod auth;
 
 use futures_util::{SinkExt, StreamExt};
 use netplay_protocol::{ClientMsg, PlayerId, PlayerInfo, Seat, ServerMsg, PROTOCOL_VERSION};
@@ -62,40 +68,92 @@ impl NetHandle {
     }
 }
 
-/// Connect to a WebSocket `url` (`ws://…` or `wss://…`) and spawn the network
-/// thread. `name` is the display name; `credential` is the opaque auth payload
-/// the server interprets (for the account scheme, `{name, password, register?}`).
-/// Returns the send handle immediately; connection results and incoming messages
-/// arrive as [`NetEvent`]s on `proxy`.
-pub fn connect(
+/// Connect to a WebSocket `url` (`ws://…` or `wss://…`) with an already-obtained
+/// session `token` and spawn the network thread. Returns the send handle
+/// immediately; connection results and incoming messages arrive as [`NetEvent`]s
+/// on `proxy`. Most callers want [`login_and_connect`], which gets the token first.
+pub fn connect(url: &str, token: String, proxy: EventLoopProxy<NetEvent>) -> NetHandle {
+    let (tx, rx) = mpsc::unbounded_channel::<ClientMsg>();
+    let hello = ClientMsg::Hello {
+        protocol: PROTOCOL_VERSION,
+        token,
+    };
+    let url = url.to_string();
+    std::thread::spawn(move || {
+        if let Some(runtime) = build_runtime(&proxy) {
+            runtime.block_on(io_loop(url, hello, proxy, rx));
+        }
+    });
+    NetHandle { tx }
+}
+
+/// Log in (or register) over REST for a token, then [`connect`] with it — all on
+/// the network thread. On auth failure a [`NetEvent::Error`] carries the server's
+/// message and no socket is opened. `url` is the game host's WebSocket URL; the
+/// REST origin is derived from it (`ws→http`, `wss→https`).
+pub fn login_and_connect(
     url: &str,
     name: &str,
-    credential: serde_json::Value,
+    password: &str,
+    register: bool,
     proxy: EventLoopProxy<NetEvent>,
 ) -> NetHandle {
     let (tx, rx) = mpsc::unbounded_channel::<ClientMsg>();
-    let hello = ClientMsg::Hello {
-        name: name.to_string(),
-        protocol: PROTOCOL_VERSION,
-        credential,
-    };
     let url = url.to_string();
-
+    let (name, password) = (name.to_string(), password.to_string());
     std::thread::spawn(move || {
-        let runtime = match tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-        {
-            Ok(runtime) => runtime,
+        let base = http_origin(&url);
+        let result = if register {
+            auth::player_register(&base, &name, &password)
+        } else {
+            auth::player_login(&base, &name, &password)
+        };
+        let token = match result {
+            Ok(token) => token.token,
             Err(e) => {
-                let _ = proxy.send_event(NetEvent::Error(format!("runtime error: {e}")));
+                let _ = proxy.send_event(NetEvent::Error(e.to_string()));
                 return;
             }
         };
-        runtime.block_on(io_loop(url, hello, proxy, rx));
+        let hello = ClientMsg::Hello {
+            protocol: PROTOCOL_VERSION,
+            token,
+        };
+        if let Some(runtime) = build_runtime(&proxy) {
+            runtime.block_on(io_loop(url, hello, proxy, rx));
+        }
     });
-
     NetHandle { tx }
+}
+
+/// The HTTP origin for the REST auth endpoints, derived from the WebSocket URL:
+/// `ws://host:port/…` → `http://host:port`, `wss://…` → `https://…` (path dropped,
+/// since the auth endpoints live at the origin root).
+fn http_origin(ws_url: &str) -> String {
+    let (scheme, rest) = match ws_url.split_once("://") {
+        Some(("wss", rest)) => ("https", rest),
+        Some(("ws", rest)) => ("http", rest),
+        // Already an http(s) URL (or unknown) — keep the scheme as given.
+        Some((scheme, rest)) => (scheme, rest),
+        None => ("http", ws_url),
+    };
+    let authority = rest.split('/').next().unwrap_or(rest);
+    format!("{scheme}://{authority}")
+}
+
+/// Build the network thread's single-threaded runtime, reporting failure as a
+/// [`NetEvent::Error`] and returning `None`.
+fn build_runtime(proxy: &EventLoopProxy<NetEvent>) -> Option<tokio::runtime::Runtime> {
+    match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => Some(runtime),
+        Err(e) => {
+            let _ = proxy.send_event(NetEvent::Error(format!("runtime error: {e}")));
+            None
+        }
+    }
 }
 
 async fn io_loop(
@@ -189,6 +247,18 @@ fn server_msg_to_event(msg: ServerMsg) -> NetEvent {
 
 #[cfg(test)]
 mod tests {
+    use super::http_origin;
+
+    #[test]
+    fn http_origin_maps_ws_schemes_and_drops_the_path() {
+        assert_eq!(http_origin("ws://127.0.0.1:5000"), "http://127.0.0.1:5000");
+        assert_eq!(
+            http_origin("wss://relay.netplay.oliverj.network"),
+            "https://relay.netplay.oliverj.network"
+        );
+        assert_eq!(http_origin("wss://host:8443/play"), "https://host:8443");
+    }
+
     #[test]
     fn crypto_provider_lets_a_tls_config_build() {
         // Reproduces the wss:// handshake path that panicked when no crypto

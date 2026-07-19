@@ -1,7 +1,8 @@
-//! End-to-end tests: a real server on an ephemeral port. The **game** rides the
-//! WebSocket (register/login → lobby → invite/accept → relay). The **admin** REST
-//! API rides plain HTTP on the admin host (login → bearer → read endpoints). No
-//! GUI; runs in CI.
+//! End-to-end tests: a real server on an ephemeral port. Players authenticate over
+//! REST on the game host (register/login → token), then present the token on the
+//! **game WebSocket** (lobby → invite/accept → relay). The **admin** REST API
+//! rides plain HTTP on the admin host (login → bearer → read endpoints). No GUI;
+//! runs in CI.
 
 use std::net::SocketAddr;
 
@@ -17,10 +18,31 @@ type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 /// The admin host the test server routes REST traffic for.
 const ADMIN_HOST: &str = "admin.test";
+/// Any host that isn't the admin host routes to the game surface (player REST + WS).
+const GAME_HOST: &str = "game.test";
 
-/// Credential that registers a new account over the game WebSocket.
-fn register(name: &str, password: &str) -> serde_json::Value {
-    serde_json::json!({ "name": name, "password": password, "register": true })
+/// Register a new account over the game-host REST API and return its session token.
+async fn register(addr: SocketAddr, name: &str, password: &str) -> String {
+    player_token(addr, "/register", name, password).await
+}
+
+/// POST `{name, password}` to a game-host auth path and return the minted token.
+async fn player_token(addr: SocketAddr, path: &str, name: &str, password: &str) -> String {
+    let body = serde_json::json!({ "name": name, "password": password }).to_string();
+    let request = format!(
+        "POST {path} HTTP/1.1\r\nHost: {GAME_HOST}\r\nContent-Type: application/json\r\n\
+         Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    let response = http(addr, &request).await;
+    assert!(
+        response.starts_with("HTTP/1.1 200"),
+        "{}",
+        first_line(&response)
+    );
+    serde_json::from_str::<TokenResp>(body_of(&response))
+        .unwrap()
+        .token
 }
 
 /// An accounts-only server on an ephemeral port. Returns the address and the
@@ -55,15 +77,14 @@ async fn spawn(with_admin: bool) -> (SocketAddr, sqlx::SqlitePool, tempfile::Tem
 
 // --- game (WebSocket) helpers ------------------------------------------------
 
-async fn connect_ws(addr: SocketAddr, name: &str, credential: serde_json::Value) -> Ws {
+async fn connect_ws(addr: SocketAddr, token: &str) -> Ws {
     let (mut ws, _) = connect_async(format!("ws://{addr}"))
         .await
         .expect("connect");
     ws.send(Message::binary(netplay_protocol::to_bytes(
         &ClientMsg::Hello {
-            name: name.to_string(),
             protocol: PROTOCOL_VERSION,
-            credential,
+            token: token.to_string(),
         },
     )))
     .await
@@ -161,8 +182,8 @@ async fn admin_login(addr: SocketAddr) -> String {
 #[tokio::test]
 async fn invite_accept_relays_and_reports_disconnect() {
     let (addr, _dir) = start_server().await;
-    let mut alice = connect_ws(addr, "Alice", register("Alice", "password")).await;
-    let mut bob = connect_ws(addr, "Bob", register("Bob", "password")).await;
+    let mut alice = connect_ws(addr, &register(addr, "Alice", "password").await).await;
+    let mut bob = connect_ws(addr, &register(addr, "Bob", "password").await).await;
 
     let bob_id = loop {
         if let ServerMsg::Presence { players } = recv(&mut alice).await {
@@ -207,29 +228,59 @@ async fn invite_accept_relays_and_reports_disconnect() {
 }
 
 #[tokio::test]
-async fn rejects_a_bad_credential() {
+async fn rejects_a_bad_token() {
     let (addr, _dir) = start_server().await;
-    let mut ws = connect_ws(addr, "Mallory", serde_json::json!("garbage")).await;
+    // A token that names no session is refused before the client can join.
+    let mut ws = connect_ws(addr, "not-a-real-token").await;
     assert!(matches!(recv(&mut ws).await, ServerMsg::Error { .. }));
 }
 
 #[tokio::test]
-async fn registration_login_and_their_failures() {
+async fn player_rest_register_and_login_and_their_failures() {
     let (addr, _dir) = start_server().await;
+    let post_game = |path: &'static str, name: &'static str, password: &'static str| async move {
+        let body = serde_json::json!({ "name": name, "password": password }).to_string();
+        let request = format!(
+            "POST {path} HTTP/1.1\r\nHost: {GAME_HOST}\r\nContent-Type: application/json\r\n\
+             Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        http(addr, &request).await
+    };
 
-    let mut dave = connect_ws(addr, "Dave", register("Dave", "password")).await;
-    assert!(matches!(recv(&mut dave).await, ServerMsg::Presence { .. }));
+    // Register succeeds and returns a token.
+    let r = post_game("/register", "Dave", "password").await;
+    assert!(r.starts_with("HTTP/1.1 200"), "{}", first_line(&r));
+    assert!(!serde_json::from_str::<TokenResp>(body_of(&r))
+        .unwrap()
+        .token
+        .is_empty());
 
-    let mut dupe = connect_ws(addr, "Dave", register("Dave", "different")).await;
-    assert!(matches!(recv(&mut dupe).await, ServerMsg::Error { .. }));
+    // A duplicate name is a conflict; a weak password is rejected.
+    let r = post_game("/register", "Dave", "different").await;
+    assert!(r.starts_with("HTTP/1.1 409"), "{}", first_line(&r));
+    let r = post_game("/register", "Eve", "short").await;
+    assert!(r.starts_with("HTTP/1.1 400"), "{}", first_line(&r));
 
-    let mut weak = connect_ws(addr, "Eve", register("Eve", "short")).await;
-    assert!(matches!(recv(&mut weak).await, ServerMsg::Error { .. }));
+    // Login: right password succeeds, wrong password is unauthorized.
+    let r = post_game("/login", "Dave", "password").await;
+    assert!(r.starts_with("HTTP/1.1 200"), "{}", first_line(&r));
+    let r = post_game("/login", "Dave", "nope").await;
+    assert!(r.starts_with("HTTP/1.1 401"), "{}", first_line(&r));
 
-    // Log in with the registered password (register omitted).
-    let login = serde_json::json!({ "name": "Dave", "password": "password" });
-    let mut relog = connect_ws(addr, "Dave", login).await;
-    assert!(matches!(recv(&mut relog).await, ServerMsg::Presence { .. }));
+    // The token from login authorizes the game socket, and presence uses the
+    // account's real name (never client-supplied).
+    let token = player_token(addr, "/login", "Dave", "password").await;
+    let mut other = connect_ws(addr, &register(addr, "Zoe", "password").await).await;
+    let mut dave = connect_ws(addr, &token).await;
+    let _ = recv(&mut dave).await; // presence
+    loop {
+        if let ServerMsg::Presence { players } = recv(&mut other).await {
+            if players.iter().any(|p| p.name == "Dave") {
+                break;
+            }
+        }
+    }
 }
 
 #[tokio::test]
@@ -237,8 +288,8 @@ async fn admin_rest_login_then_reads_lobby_state() {
     let (addr, _dir) = start_server_with_admin().await;
 
     // Two players join over the game WebSocket.
-    let mut alice = connect_ws(addr, "Alice", register("Alice", "password")).await;
-    let _bob = connect_ws(addr, "Bob", register("Bob", "password")).await;
+    let mut alice = connect_ws(addr, &register(addr, "Alice", "password").await).await;
+    let _bob = connect_ws(addr, &register(addr, "Bob", "password").await).await;
     loop {
         if let ServerMsg::Presence { players } = recv(&mut alice).await {
             if players.iter().any(|p| p.name == "Bob") {
@@ -285,8 +336,7 @@ async fn admin_login_rejects_bad_password_and_non_admins() {
     assert!(r.starts_with("HTTP/1.1 401"), "{}", first_line(&r));
 
     // A registered player is not an admin → 403.
-    let mut randy = connect_ws(addr, "Randy", register("Randy", "password")).await;
-    let _ = recv(&mut randy).await; // presence
+    register(addr, "Randy", "password").await;
     let r = http(
         addr,
         &post("/admin/login", r#"{"name":"Randy","password":"password"}"#),

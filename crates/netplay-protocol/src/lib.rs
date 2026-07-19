@@ -15,7 +15,10 @@ use serde::{Deserialize, Serialize};
 
 /// Bumped on any incompatible change to the message types. The server rejects a
 /// [`ClientMsg::Hello`] whose `protocol` doesn't match.
-pub const PROTOCOL_VERSION: u16 = 1;
+///
+/// v2: gameplay auth moved to REST — `Hello` now carries a bearer `token`
+/// (obtained from `POST /login`/`/register`) instead of a `name` + credential.
+pub const PROTOCOL_VERSION: u16 = 2;
 
 /// Reject WebSocket messages larger than this (messages are tiny; this guards
 /// against a hostile client sending a huge frame).
@@ -59,15 +62,11 @@ pub struct ServerStats {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ClientMsg {
-    /// First message on connect: the player's display name, protocol version,
-    /// and an **opaque authorization credential** — arbitrary JSON the server's
-    /// authenticator interprets (the relay never inspects it). For the account
-    /// scheme it's `{"name":"…","password":"…","register":true?}`.
-    Hello {
-        name: String,
-        protocol: u16,
-        credential: serde_json::Value,
-    },
+    /// First message on connect: the protocol version and a **bearer session
+    /// token** obtained from the REST auth endpoints (`POST /login`/`/register`).
+    /// The server validates the token and derives the account (name + role) from
+    /// it — the client no longer sends a name or password over the socket.
+    Hello { protocol: u16, token: String },
     /// Invite another player (by id) to a game.
     Invite { to: PlayerId },
     /// Accept an invite from `inviter`.
@@ -122,9 +121,8 @@ mod tests {
     #[test]
     fn client_messages_round_trip() {
         round_trip_client(ClientMsg::Hello {
-            name: "Jake".into(),
             protocol: PROTOCOL_VERSION,
-            credential: serde_json::json!({ "name": "Jake", "password": "hunter2" }),
+            token: "a1b2c3-session-token".into(),
         });
         round_trip_client(ClientMsg::Invite { to: 7 });
         round_trip_client(ClientMsg::Accept { inviter: 7 });

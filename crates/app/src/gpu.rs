@@ -225,9 +225,13 @@ impl WindowState {
             }
         }
         let Some(net) = &self.net else { return };
-        let credential =
-            serde_json::json!({ "name": name, "password": password, "register": register });
-        let handle = netplay_client::connect(&net.url, &name, credential, net.proxy.clone());
+        let handle = netplay_client::login_and_connect(
+            &net.url,
+            &name,
+            &password,
+            register,
+            net.proxy.clone(),
+        );
         crate::config::save_username(&name);
         self.session.start_connecting(handle);
     }
