@@ -217,5 +217,5 @@ screen state so a custom UI could replace it.
 ### Staged
 - ✅ Increment 2: named presence + invite lobby (egui). Auto-match replaced by presence + invites.
 - ✅ Deploy to a cloud VM (Stage 8D): WebSocket transport + TLS-fronted relay on exe.dev.
-- 🔨 Accounts + RBAC on SQLite (Stage 10, in progress).
+- ✅ Accounts + RBAC on SQLite (Stage 10): argon2id accounts; admin surface gated by role.
 - Out of scope for now: reconnect, spectating, NAT traversal.

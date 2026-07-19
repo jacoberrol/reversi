@@ -209,11 +209,12 @@ on it (closing the admin-RBAC backlog item). Anonymous play (shared token → `p
   (`NETPLAY_DB`, default `./netplay.db`) and runs embedded migrations on startup; `users` table
   (`0001_create_users.sql`). Ansible: `StateDirectory=netplay` + `NETPLAY_DB`. `just migrate-add`.
   No behavior change yet.
-- 🔮 **Increment 2 — Accounts + RBAC.** `Identity.role`; a DB-backed authenticator (accounts +
-  shared-token anonymous fallback + `NETPLAY_ADMIN="name:password"` env-seeded admin). Account
-  secrets are **argon2id** (password credential `{name, password}`); the root admin uses a password
-  for convenience. The relay rejects admin messages from non-admins. Add the `NETPLAY_ADMIN` secret
-  to the deploy workflow.
+- ✅ **Increment 2 — Accounts + RBAC.** `Identity.role`; async `Authenticator` (async-trait) with a
+  DB-backed `DbAuth` — `{name, password}` argon2id-verified against the DB, else shared-token
+  anonymous `player`. `NETPLAY_ADMIN="name:password"` seeds/rotates the admin on startup. The relay
+  gates the admin surface on `role == admin` (non-admins refused, not disconnected). `NETPLAY_ADMIN`
+  added to the deploy workflow. argon2 verify runs on `spawn_blocking`; a dev-profile `opt-level=3`
+  for argon2/blake2 keeps debug/CI test runs fast.
 
 **Deferred:** separate repo / published crate (until a second consumer exists); N-player /
 spectating / reconnect; client async / WASM browser client.
@@ -332,3 +333,9 @@ Record notable plan/scope changes here so the "why" survives.
   startup; first migration `0001_create_users.sql` (`users`: name, password_hash, role). Ansible unit
   gained `StateDirectory=netplay` + `NETPLAY_DB=/var/lib/netplay/netplay.db`. `just migrate-add`;
   local DBs gitignored. No behavior change — the store just exists; auth still shared-token.
+- 2026-07-19 — Stage 10 increment 2: accounts + RBAC. `Authenticator` is now async (async-trait);
+  `DbAuth` verifies `{name, password}` against the argon2id `users` table (else shared-token
+  anonymous player). `Identity` carries a `role`; the relay refuses the admin surface to non-admins.
+  `NETPLAY_ADMIN="name:password"` seeds/rotates the admin on boot; added to the deploy env. Fixed a
+  test race (subscribe-vs-join) and added `[profile.dev.package.argon2/blake2] opt-level = 3` so the
+  otherwise ~1–2 s/hash debug argon2 runs fast in tests/CI (~20 ms).

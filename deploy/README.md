@@ -44,11 +44,19 @@ Authorize the **public** key (`~/.ssh/netplay-ci-deploy.pub`) for the `exedev`
 user on the VM (add it in the exe.dev key UI, or append to
 `~/.ssh/authorized_keys`).
 
-### 2. Set the SSH key secret
+### 2. Set the secrets
 
 | Secret | Value |
 |---|---|
 | `DEPLOY_SSH_KEY` | the **private** key: `gh secret set DEPLOY_SSH_KEY < ~/.ssh/netplay-ci-deploy` |
+| `NETPLAY_ADMIN` | the admin account, `"name:password"`: `gh secret set NETPLAY_ADMIN` |
+
+The server seeds/rotates the admin account from `NETPLAY_ADMIN` on every boot
+(idempotent argon2id upsert), so changing the secret + `just deploy` rotates the
+admin password. The admin (e.g. the Go TUI) then logs in with credential
+`{"name": "...", "password": "..."}` and is the only role allowed on the admin
+surface (`ListPlayers`/`ListMatches`/`GetStats`/`SubscribeEvents`). Anonymous
+players use the shared token below and are refused the admin messages.
 
 (The `NETPLAY_TOKENS` secret is set for you by `just rotate-token`, next.)
 

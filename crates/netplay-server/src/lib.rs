@@ -29,6 +29,7 @@ use hyper_util::rt::{TokioIo, TokioTimer};
 use limits::{IpGuard, IpLimiter};
 use lobby::LobbyCmd;
 use netplay_protocol::{ClientMsg, ServerMsg, MAX_MESSAGE, PROTOCOL_VERSION};
+use store::Role;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, oneshot};
 use tokio_tungstenite::tungstenite::Message;
@@ -175,9 +176,14 @@ async fn relay(
         _ => return Ok(()),
     };
 
-    // Authorize before the client can touch the lobby.
-    match auth.verify(&credential) {
-        Ok(identity) => println!("authorized (key {})", identity.key_id),
+    // Authorize before the client can touch the lobby. The role stays with the
+    // connection for its lifetime — every later message is implicitly this
+    // identity; the admin surface below is gated on it.
+    let role = match auth.verify(&credential).await {
+        Ok(identity) => {
+            println!("authorized ({})", identity.label);
+            identity.role
+        }
         Err(e) => {
             let _ = outbox
                 .send(ServerMsg::Error {
@@ -186,7 +192,7 @@ async fn relay(
                 .await;
             return Ok(());
         }
-    }
+    };
 
     let (reply_tx, reply_rx) = oneshot::channel();
     if lobby_tx
@@ -255,6 +261,20 @@ async fn relay(
                 {
                     break;
                 }
+            }
+            // RBAC: the admin surface requires an admin account (anonymous
+            // players and non-admin accounts are refused, not disconnected).
+            ClientMsg::ListPlayers
+            | ClientMsg::ListMatches
+            | ClientMsg::GetStats
+            | ClientMsg::SubscribeEvents
+                if role != Role::Admin =>
+            {
+                let _ = outbox
+                    .send(ServerMsg::Error {
+                        message: "admin only".to_string(),
+                    })
+                    .await;
             }
             ClientMsg::ListPlayers => {
                 let Some(players) = query(&lobby_tx, |reply| LobbyCmd::ListPlayers { reply }).await
