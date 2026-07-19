@@ -18,11 +18,12 @@ use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio_tungstenite::tungstenite::Message;
 use winit::event_loop::EventLoopProxy;
 
-/// Supplies the opaque authorization credential sent in the handshake. A baked
-/// token lives behind this now; a platform-attestation provider can replace it
-/// later without touching [`connect`].
+/// Supplies the opaque authorization credential sent in the handshake (arbitrary
+/// JSON the server's authenticator interprets). A baked token lives behind this
+/// now; a platform-attestation provider can replace it later without touching
+/// [`connect`].
 pub trait AuthProvider {
-    fn credential(&self) -> Vec<u8>;
+    fn credential(&self) -> serde_json::Value;
 }
 
 /// Reference provider: a versioned shared token.
@@ -62,12 +63,12 @@ impl SharedToken {
 }
 
 impl AuthProvider for SharedToken {
-    fn credential(&self) -> Vec<u8> {
+    fn credential(&self) -> serde_json::Value {
         SharedTokenCredential {
             key_id: self.key_id,
             token: self.token.clone(),
         }
-        .to_bytes()
+        .to_value()
     }
 }
 

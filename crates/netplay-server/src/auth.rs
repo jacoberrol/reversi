@@ -41,9 +41,10 @@ impl AuthError {
     }
 }
 
-/// Authorizes a connecting client from its opaque credential.
+/// Authorizes a connecting client from its opaque credential (arbitrary JSON the
+/// implementation interprets; the relay never inspects it).
 pub trait Authenticator: Send + Sync {
-    fn verify(&self, credential: &[u8]) -> Result<Identity, AuthError>;
+    fn verify(&self, credential: &serde_json::Value) -> Result<Identity, AuthError>;
 }
 
 /// Reference authenticator: accept a versioned shared token. Holds a *set* of
@@ -88,8 +89,8 @@ impl SharedTokenAuth {
 }
 
 impl Authenticator for SharedTokenAuth {
-    fn verify(&self, credential: &[u8]) -> Result<Identity, AuthError> {
-        let cred = SharedTokenCredential::from_bytes(credential).ok_or(AuthError::Malformed)?;
+    fn verify(&self, credential: &serde_json::Value) -> Result<Identity, AuthError> {
+        let cred = SharedTokenCredential::from_value(credential).ok_or(AuthError::Malformed)?;
         match self.keys.get(&cred.key_id) {
             Some(expected) if *expected == cred.token => Ok(Identity {
                 key_id: cred.key_id,
@@ -111,14 +112,14 @@ mod tests {
             key_id: netplay_protocol::DEV_KEY_ID,
             token: netplay_protocol::DEV_TOKEN.into(),
         }
-        .to_bytes();
+        .to_value();
         assert!(auth.verify(&good).is_ok());
 
         let wrong_token = SharedTokenCredential {
             key_id: netplay_protocol::DEV_KEY_ID,
             token: "nope".into(),
         }
-        .to_bytes();
+        .to_value();
         assert!(matches!(
             auth.verify(&wrong_token),
             Err(AuthError::BadToken)
@@ -128,12 +129,15 @@ mod tests {
             key_id: 999,
             token: netplay_protocol::DEV_TOKEN.into(),
         }
-        .to_bytes();
+        .to_value();
         assert!(matches!(
             auth.verify(&unknown_key),
             Err(AuthError::UnknownKey)
         ));
 
-        assert!(matches!(auth.verify(b"garbage"), Err(AuthError::Malformed)));
+        assert!(matches!(
+            auth.verify(&serde_json::json!("garbage")),
+            Err(AuthError::Malformed)
+        ));
     }
 }

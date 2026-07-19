@@ -11,6 +11,8 @@ license.workspace = true
 # `schema` pulls in schemars for the self-describing `/schema` endpoint.
 netplay-protocol = { workspace = true, features = ["schema"] }
 tokio.workspace = true
+# Opaque credentials are arbitrary JSON the authenticator interprets.
+serde_json.workspace = true
 # A minimal HTTP/1 front (hyper) serves `GET /schema` and upgrades `/` to a
 # plain WebSocket (hyper-tungstenite). No TLS — the deploy proxy terminates it
 # and forwards ws://. We use hyper-tungstenite's re-exported tungstenite types

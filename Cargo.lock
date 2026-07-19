@@ -1350,6 +1350,7 @@ dependencies = [
  "futures-util",
  "netplay-protocol",
  "rustls",
+ "serde_json",
  "tokio",
  "tokio-tungstenite 0.24.0",
  "winit",
@@ -1375,6 +1376,7 @@ dependencies = [
  "hyper-tungstenite",
  "hyper-util",
  "netplay-protocol",
+ "serde_json",
  "tokio",
  "tokio-tungstenite 0.30.0",
 ]

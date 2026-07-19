@@ -72,12 +72,14 @@ pub struct SharedTokenCredential {
 }
 
 impl SharedTokenCredential {
-    pub fn to_bytes(&self) -> Vec<u8> {
-        serde_json::to_vec(self).expect("credential always serializes")
+    /// Encode as the opaque credential value carried in [`ClientMsg::Hello`]. The
+    /// relay never interprets it; the authenticator decodes it back.
+    pub fn to_value(&self) -> serde_json::Value {
+        serde_json::to_value(self).expect("credential always serializes")
     }
 
-    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        serde_json::from_slice(bytes).ok()
+    pub fn from_value(value: &serde_json::Value) -> Option<Self> {
+        serde_json::from_value(value.clone()).ok()
     }
 }
 
@@ -97,12 +99,13 @@ pub const DEV_TOKEN: &str = "reversi-dev-token";
 #[serde(tag = "type")]
 pub enum ClientMsg {
     /// First message on connect: the player's display name, protocol version,
-    /// and an **opaque authorization credential** the server's authenticator
-    /// interprets (the relay never decodes it — same discipline as `Game`).
+    /// and an **opaque authorization credential** — arbitrary JSON the server's
+    /// authenticator interprets (the relay never inspects it). For the reference
+    /// token scheme it's `{"key_id":N,"token":"…"}`.
     Hello {
         name: String,
         protocol: u16,
-        credential: Vec<u8>,
+        credential: serde_json::Value,
     },
     /// Invite another player (by id) to a game.
     Invite { to: PlayerId },
@@ -214,7 +217,7 @@ mod tests {
                 key_id: DEV_KEY_ID,
                 token: DEV_TOKEN.into(),
             }
-            .to_bytes(),
+            .to_value(),
         });
         round_trip_client(ClientMsg::Invite { to: 7 });
         round_trip_client(ClientMsg::Accept { inviter: 7 });
@@ -348,9 +351,13 @@ mod tests {
             token: "abc".into(),
         };
         assert_eq!(
-            SharedTokenCredential::from_bytes(&cred.to_bytes()),
+            SharedTokenCredential::from_value(&cred.to_value()),
             Some(cred)
         );
-        assert_eq!(SharedTokenCredential::from_bytes(b"not json"), None);
+        // A value of the wrong shape isn't a credential.
+        assert_eq!(
+            SharedTokenCredential::from_value(&serde_json::json!("nope")),
+            None
+        );
     }
 }

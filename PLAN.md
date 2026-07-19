@@ -304,3 +304,7 @@ Record notable plan/scope changes here so the "why" survives.
 - 2026-07-18 — Stage 9 increment 3b: admin event stream. `SubscribeEvents` marks a connection
   subscribed; the lobby pushes `PlayerJoined`/`PlayerLeft`/`MatchStarted` to subscribers as they
   happen. Tested end-to-end (subscribe, then observe a join, a match, and a leave).
+- 2026-07-18 — Stage 9: `Hello.credential` changed from an opaque byte array to an opaque **JSON
+  value** (wire: `"credential":{"key_id":2,"token":"…"}` instead of a byte array). `Authenticator`/
+  `AuthProvider` now pass `serde_json::Value`; the relay still never inspects it. Pre-deploy ergonomics
+  for non-Rust clients.

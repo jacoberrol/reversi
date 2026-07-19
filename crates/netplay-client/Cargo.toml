@@ -11,6 +11,8 @@ license.workspace = true
 [dependencies]
 netplay-protocol.workspace = true
 winit.workspace = true
+# The auth credential is arbitrary JSON the server interprets.
+serde_json.workspace = true
 # WebSocket over TLS (wss://), on a tokio runtime confined to the network thread.
 # The winit event loop stays synchronous; this runtime never touches it.
 tokio = { workspace = true, features = ["rt", "macros"] }

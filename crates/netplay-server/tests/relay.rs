@@ -17,12 +17,12 @@ use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 
 type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
-fn dev_credential() -> Vec<u8> {
+fn dev_credential() -> serde_json::Value {
     SharedTokenCredential {
         key_id: DEV_KEY_ID,
         token: DEV_TOKEN.to_string(),
     }
-    .to_bytes()
+    .to_value()
 }
 
 async fn start_server() -> SocketAddr {
@@ -35,7 +35,7 @@ async fn start_server() -> SocketAddr {
     addr
 }
 
-async fn connect_ws(addr: SocketAddr, name: &str, credential: Vec<u8>) -> Ws {
+async fn connect_ws(addr: SocketAddr, name: &str, credential: serde_json::Value) -> Ws {
     let (mut ws, _) = connect_async(format!("ws://{addr}"))
         .await
         .expect("connect");
@@ -132,7 +132,7 @@ async fn invite_accept_relays_and_reports_disconnect() {
 #[tokio::test]
 async fn rejects_a_bad_credential() {
     let addr = start_server().await;
-    let mut ws = connect_ws(addr, "Mallory", b"garbage".to_vec()).await;
+    let mut ws = connect_ws(addr, "Mallory", serde_json::json!("garbage")).await;
     assert!(matches!(recv(&mut ws).await, ServerMsg::Error { .. }));
 }
 
