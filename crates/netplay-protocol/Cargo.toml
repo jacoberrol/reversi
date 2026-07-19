@@ -10,3 +10,10 @@ license.workspace = true
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+# JSON Schema generation for the self-describing `/schema` endpoint. Optional so
+# the client doesn't carry it — only the server enables `schema`.
+schemars = { version = "0.8", optional = true }
+
+[features]
+# Derive JSON Schema for the wire types and expose `service_descriptor()`.
+schema = ["dep:schemars"]
