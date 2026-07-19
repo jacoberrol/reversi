@@ -42,7 +42,9 @@ Other recipes (`atlas` is stubbed until the deferred sprite pipeline — see [PL
 |---|---|
 | `just run` | Launch the game window and play Black vs. the AI (White). Click a difficulty button (or press `1`–`4`); at game over, click the board or press `R` for a new game. The title bar shows turn, difficulty, and result. |
 | `just serve [ADDR]` | Run the multiplayer relay server (default `127.0.0.1:5000`). |
-| `just play [ADDR] [NAME]` | Launch the game in online mode, connecting to a relay. |
+| `just online [NAME]` | Play online against the public relay (baked-in `wss://` URL). |
+| `just play [URL] [NAME]` | Play against a specific relay (e.g. a local `ws://` server). |
+| `just deploy` | Trigger the relay deploy to the exe.dev VM (manual CI workflow; see [deploy/README.md](deploy/README.md)). |
 | `just selfplay N` | Headless: play N random self-play games. |
 | `just matchup [DEEP] [SHALLOW] [GAMES]` | Play a depth-vs-depth AI match and print the score. |
 | `just frame` | Render one board frame to `target/frame.png` for visual inspection. |
@@ -67,8 +69,14 @@ just play ws://127.0.0.1:5000 Bob   # window 2: lobby
 
 In one window, click **Invite** next to the other player; in the other, click **Accept**. The
 inviter plays Black (moves first). Across two Macs on the same Wi-Fi, run `just serve 0.0.0.0:5000`
-on one and `just play ws://<that-Mac's-IP>:5000 <name>` on each. Over the internet the client uses
-`wss://<host>` (TLS terminated by a front proxy). See [DESIGN.md §9](DESIGN.md) for the architecture.
+on one and `just play ws://<that-Mac's-IP>:5000 <name>` on each.
+
+### Multiplayer (over the internet)
+
+`just online <name>` connects to the public relay at `wss://relay.netplay.oliverj.network` (TLS
+terminated by a front proxy that forwards to the server on the VM). Deploying/operating that relay
+is documented in [deploy/README.md](deploy/README.md); the architecture is in
+[DESIGN.md §9](DESIGN.md).
 
 ## Project layout
 

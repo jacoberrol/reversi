@@ -178,9 +178,11 @@ tamper-proof.
   (WebSocket on a tokio runtime confined to the network thread; winit loop stays sync) speak WebSocket;
   `--server` is now a URL (`ws://…` local, `wss://…` deployed). Protocol messages unchanged; length
   framing replaced by WS message delimiting. Relay test rewritten over WS. Testable on localhost.
-- 🔮 **Stage D2 — Deploy (netplay.exe.xyz).** Ansible playbook (systemd service, `NETPLAY_TOKENS` env)
-  + a manual-dispatch GitHub Actions deploy workflow using GH Secrets (SSH key, token). TLS is
-  terminated by the VPS proxy, which forwards `wss://` → `ws://` on the VM port. I prepare; owner triggers.
+- ✅ **Stage D2 — Deploy (relay.netplay.oliverj.network).** Ansible playbook (`deploy/`) — locked-down
+  `netplay` system user, hardened `systemd` unit bound to `127.0.0.1:8000`, `NETPLAY_TOKENS` env file —
+  driven by a manual-dispatch GitHub Actions workflow that builds a static `x86_64-musl` binary and runs
+  the playbook over a dedicated CI SSH key (GH Secrets). TLS terminated by the exe.dev proxy → `ws://` on
+  the VM. Client bakes in `DEFAULT_RELAY_URL` (`--online`). I prepared; owner adds secrets and triggers.
 - 🔮 **Stage E (later) — Attestation.** Swap `AuthProvider` to App Attest (iOS) / Play Integrity
   (Android) behind the unchanged seam. Web-distributed macOS stays at token+TLS deterrence.
 
@@ -257,3 +259,8 @@ Record notable plan/scope changes here so the "why" survives.
 - 2026-07-18 — Stage 8D1 done: WebSocket transport. Server on `tokio-tungstenite` (plain ws); client on
   WebSocket over a tokio runtime confined to the network thread (winit loop stays sync — revised the
   "client fully async-free" note). `--server` is now a ws/wss URL. Protocol unchanged; relay test over WS.
+- 2026-07-18 — Stage 8D2 done: deploy tooling. `deploy/` Ansible playbook (locked-down `netplay` user,
+  hardened systemd unit on `127.0.0.1:8000`, `NETPLAY_TOKENS` env) + manual-dispatch `Deploy relay`
+  workflow that builds a static `x86_64-musl` binary and runs the playbook via a dedicated CI SSH key
+  (GH Secrets). Client bakes in `DEFAULT_RELAY_URL` = `wss://relay.netplay.oliverj.network` (`--online`);
+  `just online` / `just deploy` added. Owner supplies secrets and triggers the workflow.

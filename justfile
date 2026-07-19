@@ -18,10 +18,19 @@ run:
 serve ADDR="127.0.0.1:5000":
     cargo run -p netplay-server -- {{ADDR}}
 
-# Launch the game in online mode, connecting to a relay by WebSocket URL.
+# Launch the game against a specific relay by WebSocket URL.
 # `URL` is ws://host:port locally, or wss://host for a TLS-fronted deploy.
 play URL="ws://127.0.0.1:5000" NAME="Player":
     cargo run -p app -- --server {{URL}} --name {{NAME}}
+
+# Launch the game against the public relay (baked-in wss:// URL). No server needed.
+online NAME="Player":
+    cargo run -p app -- --online --name {{NAME}}
+
+# Deploy the relay to the exe.dev VM (manual GitHub Actions workflow).
+# Requires the DEPLOY_SSH_KEY and NETPLAY_TOKENS repo secrets — see deploy/README.md.
+deploy:
+    gh workflow run "Deploy relay"
 
 # Stops the server automatically when both windows close (or on Ctrl-C). Uses
 # port 5099 to avoid clashing with a manual `just serve`. In one window click
