@@ -8,11 +8,13 @@
 //! relay (e.g. a local `ws://` server). `--name NAME` sets the display name.
 
 pub mod anim;
+pub mod config;
 pub mod egui_layer;
 pub mod game;
 pub mod game_msg;
 pub mod gpu;
 pub mod lobby;
+pub mod login;
 pub mod session;
 
 use std::sync::Arc;
@@ -20,7 +22,7 @@ use std::sync::Arc;
 use netplay_client::NetEvent;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
-use winit::event::{ElementState, KeyEvent, MouseButton, WindowEvent};
+use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::Key;
 use winit::window::{Window, WindowId};
@@ -35,7 +37,7 @@ pub const DEFAULT_RELAY_URL: &str = "wss://relay.netplay.oliverj.network";
 /// How the app was launched.
 enum Launch {
     SinglePlayer,
-    Network { addr: String, name: String },
+    Network { url: String },
 }
 
 struct App {
@@ -59,14 +61,10 @@ impl ApplicationHandler<NetEvent> for App {
         );
         let mut state = WindowState::new(window);
 
-        if let Launch::Network { addr, name } = &self.launch {
-            // Connection is async on the network thread; failures arrive as
-            // `NetEvent::Error`/`Disconnected` and show in the lobby. The token
-            // comes from the `NETPLAY_TOKEN` env var (dev default if unset), so
-            // the real shared secret is never baked into the binary.
-            let auth = netplay_client::SharedToken::from_env_or_dev();
-            let handle = netplay_client::connect(addr, name, &auth, self.proxy.clone());
-            state.enter_network(handle, name.clone());
+        if let Launch::Network { url } = &self.launch {
+            // Network mode starts on the login screen; the connection is made
+            // when the player logs in or registers.
+            state.begin_login(url.clone(), self.proxy.clone());
         }
 
         state.request_redraw();
@@ -97,25 +95,24 @@ impl ApplicationHandler<NetEvent> for App {
                 state.mouse_button(button_state == ElementState::Pressed);
             }
 
-            WindowEvent::KeyboardInput {
-                event:
-                    KeyEvent {
-                        logical_key: Key::Character(s),
-                        state: ElementState::Pressed,
-                        ..
-                    },
-                ..
-            } => {
-                let changed = match s.as_str() {
-                    "r" | "R" => state.restart(),
-                    "1" => state.set_difficulty_index(0),
-                    "2" => state.set_difficulty_index(1),
-                    "3" => state.set_difficulty_index(2),
-                    "4" => state.set_difficulty_index(3),
-                    _ => false,
-                };
-                if changed {
-                    state.request_redraw();
+            WindowEvent::KeyboardInput { event, .. } => {
+                if state.is_login() {
+                    // On the login screen, keys drive the text fields.
+                    state.login_key(&event);
+                } else if event.state == ElementState::Pressed {
+                    if let Key::Character(s) = &event.logical_key {
+                        let changed = match s.as_str() {
+                            "r" | "R" => state.restart(),
+                            "1" => state.set_difficulty_index(0),
+                            "2" => state.set_difficulty_index(1),
+                            "3" => state.set_difficulty_index(2),
+                            "4" => state.set_difficulty_index(3),
+                            _ => false,
+                        };
+                        if changed {
+                            state.request_redraw();
+                        }
+                    }
                 }
             }
 
@@ -153,13 +150,12 @@ pub fn run() {
 }
 
 /// Parse the launch flags. `--online` joins the public relay; `--server URL`
-/// overrides it with a specific relay; `--name NAME` sets the display name.
-/// With neither `--online` nor `--server`, launch single-player.
+/// overrides it with a specific relay. With neither, launch single-player. (The
+/// name comes from the login screen now, not a flag.)
 fn parse_launch() -> Launch {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut server = None;
     let mut online = false;
-    let mut name = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -171,20 +167,13 @@ fn parse_launch() -> Launch {
                 online = true;
                 i += 1;
             }
-            "--name" => {
-                name = args.get(i + 1).cloned();
-                i += 2;
-            }
             _ => i += 1,
         }
     }
     // An explicit `--server` wins; otherwise `--online` uses the baked-in relay.
-    let addr = server.or_else(|| online.then(|| DEFAULT_RELAY_URL.to_string()));
-    match addr {
-        Some(addr) => Launch::Network {
-            addr,
-            name: name.unwrap_or_else(|| "Player".to_string()),
-        },
+    let url = server.or_else(|| online.then(|| DEFAULT_RELAY_URL.to_string()));
+    match url {
+        Some(url) => Launch::Network { url },
         None => Launch::SinglePlayer,
     }
 }

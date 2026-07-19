@@ -1,15 +1,15 @@
 //! Netplay relay server binary. Binds an address and serves connections.
 //!
-//! Auth: named accounts (argon2id) in the database gate the admin surface by
-//! role; the shared token (`NETPLAY_TOKENS`, or the dev default) authorizes
-//! anonymous players. Seed/rotate the admin with `NETPLAY_ADMIN="name:password"`.
+//! Auth is accounts-only: clients log in (or self-register) with a name +
+//! password (argon2id), and the account's role gates the admin surface. Seed
+//! the admin with `NETPLAY_ADMIN="name:password"`.
 //!
 //! Persistent state lives in a SQLite database at `NETPLAY_DB` (default
 //! `netplay.db`); it's created and migrated on startup.
 
 use std::sync::Arc;
 
-use netplay_server::auth::{DbAuth, SharedTokenAuth};
+use netplay_server::auth::DbAuth;
 use netplay_server::store;
 use tokio::net::TcpListener;
 
@@ -50,8 +50,8 @@ async fn main() {
     let listener = TcpListener::bind(&addr)
         .await
         .unwrap_or_else(|e| panic!("failed to bind {addr}: {e}"));
-    // DB-backed auth: named accounts by role, shared token for anonymous players.
-    let auth = Arc::new(DbAuth::new(pool, SharedTokenAuth::from_env_or_dev()));
+    // Accounts-only: every connection logs in or registers.
+    let auth = Arc::new(DbAuth::new(pool));
     println!("netplay relay listening on {addr}");
     netplay_server::serve(listener, auth).await;
 }

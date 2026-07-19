@@ -120,19 +120,21 @@ impl NetHandle {
 }
 
 /// Connect to a WebSocket `url` (`ws://…` or `wss://…`) and spawn the network
-/// thread. Returns the send handle immediately; connection results and incoming
-/// messages arrive as [`NetEvent`]s on `proxy`.
+/// thread. `name` is the display name; `credential` is the opaque auth payload
+/// the server interprets (for the account scheme, `{name, password, register?}`).
+/// Returns the send handle immediately; connection results and incoming messages
+/// arrive as [`NetEvent`]s on `proxy`.
 pub fn connect(
     url: &str,
     name: &str,
-    auth: &impl AuthProvider,
+    credential: serde_json::Value,
     proxy: EventLoopProxy<NetEvent>,
 ) -> NetHandle {
     let (tx, rx) = mpsc::unbounded_channel::<ClientMsg>();
     let hello = ClientMsg::Hello {
         name: name.to_string(),
         protocol: PROTOCOL_VERSION,
-        credential: auth.credential(),
+        credential,
     };
     let url = url.to_string();
 

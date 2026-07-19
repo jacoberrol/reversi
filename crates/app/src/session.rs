@@ -14,9 +14,12 @@ use crate::anim::Animator;
 use crate::game::Game;
 use crate::game_msg::{self, GameMsg};
 use crate::lobby::{LobbyAction, LobbyState};
+use crate::login::LoginForm;
 
 /// Which screen is showing.
 pub enum Screen {
+    /// Log in / create an account (network mode, before connecting).
+    Login,
     Lobby,
     InGame,
 }
@@ -38,6 +41,7 @@ pub struct Session {
     opponent: String,
     ended: Option<EndReason>,
     lobby: LobbyState,
+    login: LoginForm,
 }
 
 impl Session {
@@ -51,23 +55,50 @@ impl Session {
             opponent: String::new(),
             ended: None,
             lobby: LobbyState::default(),
+            login: LoginForm::default(),
         }
     }
 
-    /// Enter network mode: connected, showing the lobby.
-    pub fn enter_network(&mut self, handle: NetHandle, name: String) {
-        self.net = Some(handle);
-        self.screen = Screen::Lobby;
-        self.lobby.me = name;
-        self.lobby.status = "Waiting for others to join\u{2026}".to_string();
+    /// Enter network mode on the login screen, pre-filling `name`.
+    pub fn begin_login(&mut self, name: String) {
+        self.screen = Screen::Login;
+        self.login.name = name;
     }
 
-    /// Enter network mode already failed (couldn't connect).
-    pub fn set_net_error(&mut self, name: String, message: String) {
+    /// A connection attempt is underway (holds the send handle; still on the
+    /// login screen until the server confirms).
+    pub fn start_connecting(&mut self, handle: NetHandle) {
+        self.net = Some(handle);
+        self.login.connecting = true;
+        self.login.error = None;
+    }
+
+    /// The connection couldn't even be attempted; show the error on the form.
+    pub fn login_error(&mut self, message: String) {
+        self.login.error = Some(message);
+        self.login.connecting = false;
         self.net = None;
-        self.screen = Screen::Lobby;
-        self.lobby.me = name;
-        self.lobby.status = format!("Error: {message}");
+    }
+
+    pub fn login_connecting(&self) -> bool {
+        self.login.connecting
+    }
+
+    pub fn is_login(&self) -> bool {
+        matches!(self.screen, Screen::Login)
+    }
+
+    pub fn login_form(&self) -> &LoginForm {
+        &self.login
+    }
+
+    pub fn login_form_mut(&mut self) -> &mut LoginForm {
+        &mut self.login
+    }
+
+    /// Screens driven by egui (login + lobby) get pointer/keyboard input fed in.
+    pub fn uses_egui(&self) -> bool {
+        matches!(self.screen, Screen::Login | Screen::Lobby)
     }
 
     pub fn is_lobby(&self) -> bool {
@@ -169,6 +200,31 @@ impl Session {
 
     /// Apply a network event. Returns whether a redraw is needed.
     pub fn on_net_event(&mut self, event: NetEvent) -> bool {
+        // On the login screen, the first success enters the lobby and any
+        // failure returns to the form with an error.
+        if self.is_login() {
+            match event {
+                NetEvent::Presence(players) => {
+                    self.lobby.me = self.login.name.clone();
+                    self.login.connecting = false;
+                    self.lobby.players = players;
+                    self.lobby.status = if self.lobby.players.is_empty() {
+                        "Waiting for others to join\u{2026}".to_string()
+                    } else {
+                        String::new()
+                    };
+                    self.screen = Screen::Lobby;
+                }
+                NetEvent::Error(message) => self.login_error(message),
+                // The server sends an Error then closes; only treat a disconnect
+                // as the failure if no Error already arrived (still connecting).
+                NetEvent::Disconnected if self.login.connecting => {
+                    self.login_error("could not connect".to_string());
+                }
+                _ => {} // no other events before the lobby
+            }
+            return true;
+        }
         match event {
             NetEvent::Presence(players) => {
                 self.lobby.players = players;
@@ -251,6 +307,9 @@ impl Session {
 
     /// The window title reflecting the current state.
     pub fn title(&self) -> String {
+        if self.is_login() {
+            return "Reversi \u{2014} Log in".to_string();
+        }
         if self.is_lobby() {
             return "Reversi \u{2014} Lobby".to_string();
         }

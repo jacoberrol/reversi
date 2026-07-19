@@ -21,6 +21,8 @@ winit.workspace = true
 egui.workspace = true
 egui-wgpu.workspace = true
 pollster.workspace = true
+# Per-OS config dir to remember the last username between launches.
+directories = "5"
 
 [dev-dependencies]
 # For the offscreen lobby-mockup example (`just lobby-frame`) PNG readback.

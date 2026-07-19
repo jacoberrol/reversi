@@ -42,8 +42,8 @@ Other recipes (`atlas` is stubbed until the deferred sprite pipeline — see [PL
 |---|---|
 | `just run` | Launch the game window and play Black vs. the AI (White). Click a difficulty button (or press `1`–`4`); at game over, click the board or press `R` for a new game. The title bar shows turn, difficulty, and result. |
 | `just serve [ADDR]` | Run the multiplayer relay server (default `127.0.0.1:5000`). |
-| `just online [NAME]` | Play online against the public relay (baked-in `wss://` URL). |
-| `just play [URL] [NAME]` | Play against a specific relay (e.g. a local `ws://` server). |
+| `just online` | Play online against the public relay (baked-in `wss://` URL); log in / register on the title screen. |
+| `just play [URL]` | Play against a specific relay (e.g. a local `ws://` server). |
 | `just deploy` | Trigger the relay deploy to the exe.dev VM (manual CI workflow; see [deploy/README.md](deploy/README.md)). |
 | `just schema [URL]` | Fetch the relay's self-describing wire contract (JSON Schema) from `URL/schema`. |
 | `just asyncapi [URL]` | Fetch the relay's AsyncAPI 3.0 document from `URL/asyncapi.json`. |
@@ -54,32 +54,30 @@ Other recipes (`atlas` is stubbed until the deferred sprite pipeline — see [PL
 
 ### Multiplayer (LAN / localhost)
 
-Players connect to a small relay server and see each other in a **lobby**; one invites another, they
-accept, and the game begins. The fastest way to try it on one machine:
+Each client **logs in or creates an account** on a title screen, then sees others in a **lobby**;
+one invites another, they accept, and the game begins. The fastest way to try it on one machine:
 
 ```sh
-just demo   # builds, starts a relay, and opens two lobby windows that can invite each other
+just demo   # builds, starts a relay, opens two windows — register two accounts, then invite/accept
 ```
 
 Or run the pieces yourself (three terminals):
 
 ```sh
-just serve                          # relay listens on 127.0.0.1:5000 (plain ws)
-just play ws://127.0.0.1:5000 Alice # window 1: lobby
-just play ws://127.0.0.1:5000 Bob   # window 2: lobby
+just serve                     # relay listens on 127.0.0.1:5000 (plain ws)
+just play ws://127.0.0.1:5000  # window 1: log in / register
+just play ws://127.0.0.1:5000  # window 2: log in / register
 ```
 
-In one window, click **Invite** next to the other player; in the other, click **Accept**. The
-inviter plays Black (moves first). Across two Macs on the same Wi-Fi, run `just serve 0.0.0.0:5000`
-on one and `just play ws://<that-Mac's-IP>:5000 <name>` on each.
+Create a different account in each window, then click **Invite** next to the other player and
+**Accept** in the other. The inviter plays Black (moves first). Across two Macs on the same Wi-Fi,
+run `just serve 0.0.0.0:5000` on one and `just play ws://<that-Mac's-IP>:5000` on each.
 
 ### Multiplayer (over the internet)
 
-`just online <name>` connects to the public relay at `wss://relay.netplay.oliverj.network` (TLS
-terminated by a front proxy that forwards to the server on the VM). The relay is gated by a shared
-token (shared out-of-band). Store it once with `just set-token` (macOS Keychain) and `just online`
-picks it up; or `export NETPLAY_TOKEN=<id:token>` as a one-off. Without a valid token the client
-falls back to the dev token, which the deployed relay rejects. Deploying/operating that relay is
+`just online` connects to the public relay at `wss://relay.netplay.oliverj.network` (TLS terminated
+by a front proxy that forwards to the server on the VM). Log in or create an account on the title
+screen — the relay is **accounts-only** (open registration). Deploying/operating that relay is
 documented in [deploy/README.md](deploy/README.md); the architecture is in [DESIGN.md §9](DESIGN.md).
 
 ## Project layout
