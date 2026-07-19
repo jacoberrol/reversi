@@ -185,7 +185,9 @@ can use, split into `netplay-protocol` / `netplay-server` / `netplay-client`. Th
 ### Persistence: SQLite for accounts (Stage 10 — the stateless-relay inflection)
 The relay was in-memory only; **durable identity is where it grows a database** (flagged as the
 biggest inflection above). We add **SQLite via `sqlx`** (async, tokio-native), holding a `users`
-table (name, `token_hash`, `role`). This backs **accounts + RBAC**: `Identity` gains a `role`, and
+table (name, `password_hash`, `role`). Account secrets are **argon2id** PHC strings (per-hash salt
+embedded — the root admin uses a human password, so a slow salted hash is required, not sha256).
+This backs **accounts + RBAC**: `Identity` gains a `role`, and
 the admin surface is gated on `role == admin` (closing the deferred RBAC item). Anonymous play stays
 — the shared token still authorizes a plain `player` with no account — so existing game clients are
 untouched; accounts are additive and only they can be admins. Decisions:

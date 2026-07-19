@@ -210,8 +210,10 @@ on it (closing the admin-RBAC backlog item). Anonymous play (shared token → `p
   (`0001_create_users.sql`). Ansible: `StateDirectory=netplay` + `NETPLAY_DB`. `just migrate-add`.
   No behavior change yet.
 - 🔮 **Increment 2 — Accounts + RBAC.** `Identity.role`; a DB-backed authenticator (accounts +
-  shared-token anonymous fallback + `NETPLAY_ADMIN` env-seeded admin); the relay rejects admin
-  messages from non-admins. Add the `NETPLAY_ADMIN` secret to the deploy workflow.
+  shared-token anonymous fallback + `NETPLAY_ADMIN="name:password"` env-seeded admin). Account
+  secrets are **argon2id** (password credential `{name, password}`); the root admin uses a password
+  for convenience. The relay rejects admin messages from non-admins. Add the `NETPLAY_ADMIN` secret
+  to the deploy workflow.
 
 **Deferred:** separate repo / published crate (until a second consumer exists); N-player /
 spectating / reconnect; client async / WASM browser client.
@@ -327,6 +329,6 @@ Record notable plan/scope changes here so the "why" survives.
   a *described* schema instead of a bare any.
 - 2026-07-19 — Stage 10 increment 1: DB infrastructure. Added `sqlx` + bundled SQLite; a `store`
   module opens `NETPLAY_DB` (default `./netplay.db`), creating it and running embedded migrations on
-  startup; first migration `0001_create_users.sql` (`users`: name, token_hash, role). Ansible unit
+  startup; first migration `0001_create_users.sql` (`users`: name, password_hash, role). Ansible unit
   gained `StateDirectory=netplay` + `NETPLAY_DB=/var/lib/netplay/netplay.db`. `just migrate-add`;
   local DBs gitignored. No behavior change — the store just exists; auth still shared-token.
