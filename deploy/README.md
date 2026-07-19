@@ -96,3 +96,14 @@ Watch it with `gh run watch` or in the Actions tab.
   deploy` — the env file re-renders and the server re-upserts the admin on boot.
 - **Revoke CI access:** remove the `netplay-ci-deploy` public key from the VM;
   it's independent of your personal keys.
+- **Prune expired admin sessions:** token validation never deletes rows (it's a
+  pure read that ignores expired tokens), so expired sessions accumulate until an
+  operator reclaims them. On the VM, against the live DB as the service user:
+
+  ```sh
+  sudo -u netplay NETPLAY_DB=/var/lib/netplay/netplay.db \
+    /usr/local/bin/netplay-server prune-tokens
+  ```
+
+  Safe while the server runs (SQLite handles the concurrent writer). It only
+  reclaims storage; it never affects a live token.

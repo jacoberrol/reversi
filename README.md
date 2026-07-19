@@ -42,6 +42,7 @@ Other recipes (`atlas` is stubbed until the deferred sprite pipeline — see [PL
 |---|---|
 | `just run` | Launch the game window and play Black vs. the AI (White). Click a difficulty button (or press `1`–`4`); at game over, click the board or press `R` for a new game. The title bar shows turn, difficulty, and result. |
 | `just serve [ADDR]` | Run the multiplayer relay server (default `127.0.0.1:5000`). |
+| `just prune-tokens` | Operator action: delete expired admin sessions from the DB (`NETPLAY_DB`). |
 | `just online` | Play online against the public relay (baked-in `wss://` URL); log in / register on the title screen. |
 | `just play [URL]` | Play against a specific relay (e.g. a local `ws://` server). |
 | `just deploy` | Trigger the relay deploy to the exe.dev VM (manual CI workflow; see [deploy/README.md](deploy/README.md)). |

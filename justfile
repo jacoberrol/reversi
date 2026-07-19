@@ -32,6 +32,13 @@ run:
 serve ADDR="127.0.0.1:5000":
     cargo run -p netplay-server -- {{ADDR}}
 
+# Operator action: delete expired admin sessions from the DB (`NETPLAY_DB`, else
+# ./netplay.db). Token validation never prunes, so run this to reclaim the rows.
+# On the VM: sudo -u netplay NETPLAY_DB=/var/lib/netplay/netplay.db \
+#   /usr/local/bin/netplay-server prune-tokens
+prune-tokens:
+    cargo run -q -p netplay-server -- prune-tokens
+
 # Launch the game against a specific relay by WebSocket URL (opens the login
 # screen). `URL` is ws://host:port locally, or wss://host for a TLS-fronted deploy.
 play URL="ws://127.0.0.1:5000":

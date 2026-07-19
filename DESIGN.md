@@ -134,8 +134,13 @@ Rust server on a cloud VM. We build the real topology now and stage toward that.
   - **Auth: bearer sessions.** `POST /admin/login` takes `{name, password}`, verifies the account
     (must be an admin), and returns an opaque bearer token; later admin requests carry
     `Authorization: Bearer <token>`. Tokens are 256-bit random, stored **sha256-hashed** in a
-    `sessions` table (never raw), with a TTL; expired rows are pruned lazily on lookup. (argon2 is
-    for the low-entropy passwords; a high-entropy token needs only a fast hash.)
+    `sessions` table (never raw), with a TTL. (argon2 is for the low-entropy passwords; a
+    high-entropy token needs only a fast hash.) **Validation is a pure read** — the lookup filters
+    on `expires_at`, so an expired token is never honored, but the dead row is left in place.
+    Reclaiming expired rows is an **operator action** (`netplay-server prune-tokens` / `just
+    prune-tokens`), deliberately not run on a timer or on every request: an earlier version pruned
+    inside the lookup, which turned every admin read into a table-scanning write — the wrong shape,
+    even if negligible at this scale.
   - **Two token lifetimes.** A login token is short (one work session, 24 h). `POST /admin/tokens`
     (bearer-guarded, optional `{days}`, default 30, capped at 90) mints a **durable** token — a
     fresh session for the same account — so a tool (the Go TUI) authenticates once with the password
