@@ -148,7 +148,19 @@ can use, split into `netplay-protocol` / `netplay-server` / `netplay-client`. Th
 - **Rate limiting (Stage 8C, done).** Server-side, before the lobby, drop-and-log: a handshake
   timeout, per-IP concurrency + new-connection rate, a per-connection inbound message bucket, and a
   lobby player cap. Tunable consts in `netplay-server::limits`; auth and rate-limit are separate
-  seams applied in sequence. Next: TLS+WS (8D).
+  seams applied in sequence.
+- **Deploy (Stage 8D2, done).** The relay runs on an exe.dev VM under `systemd`, bound to
+  `127.0.0.1:8000`; the provider's proxy terminates TLS at `relay.netplay.oliverj.network` and
+  forwards to it. The client bakes that `wss://` URL in as `DEFAULT_RELAY_URL` (`--online`);
+  `--server URL` overrides for local dev. The client's token comes from the `NETPLAY_TOKEN` env var
+  (dev default if unset), so the real shared secret is supplied at runtime, never baked into the
+  binary or the repo — a deterrence gate, matching the honest threat model above. Deploys are
+  **Ansible driven by a manual GitHub Actions
+  workflow** (`deploy/`): CI builds a static `x86_64-unknown-linux-musl` binary (no toolchain on the
+  VM, no glibc coupling) and the playbook installs it under a locked-down system user with a hardened
+  unit; the `NETPLAY_TOKENS` secret and a dedicated deploy SSH key live in GitHub Secrets. Chosen
+  over building on the VM (keeps the box minimal) and over a push-triggered deploy (production is
+  hand-triggered). See `deploy/README.md`.
 
 ### UI: egui for menus/lobby (decided)
 On-screen text and the lobby use **egui** (`egui` + `egui-wgpu`, on our wgpu 0.20). We evaluated
@@ -162,5 +174,5 @@ screen state so a custom UI could replace it.
 
 ### Staged
 - ✅ Increment 2: named presence + invite lobby (egui). Auto-match replaced by presence + invites.
-- Deploy to a cloud VM: add TLS, swap TCP→WebSocket behind the connection seam.
+- ✅ Deploy to a cloud VM (Stage 8D): WebSocket transport + TLS-fronted relay on exe.dev.
 - Out of scope for now: accounts/auth, reconnect, spectating, NAT traversal.

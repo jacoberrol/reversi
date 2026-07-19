@@ -1,0 +1,44 @@
+name: Deploy relay
+
+# Manual trigger only — you click "Run workflow" (or `just deploy`). Never runs
+# on push. Requires the DEPLOY_SSH_KEY and NETPLAY_TOKENS repository secrets.
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Install the musl target and linker
+        run: |
+          rustup target add x86_64-unknown-linux-musl
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Build the static relay binary
+        run: cargo build --release --target x86_64-unknown-linux-musl -p netplay-server
+
+      - name: Install Ansible
+        run: pipx install --include-deps ansible-core
+
+      - name: Configure the deploy SSH key
+        run: |
+          mkdir -p ~/.ssh
+          install -m 600 /dev/null ~/.ssh/netplay-ci-deploy
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/netplay-ci-deploy
+          ssh-keyscan -H netplay.exe.xyz >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Run the Ansible playbook
+        working-directory: deploy/ansible
+        env:
+          # Read while rendering netplay.env.j2 (kept off the command line).
+          NETPLAY_TOKENS: ${{ secrets.NETPLAY_TOKENS }}
+          BINARY_SRC: ${{ github.workspace }}/target/x86_64-unknown-linux-musl/release/netplay-server
+        run: |
+          ansible-playbook playbook.yml \
+            -i inventory.ini \
+            --private-key ~/.ssh/netplay-ci-deploy \
+            --extra-vars "netplay_binary_src=$BINARY_SRC"

@@ -39,6 +39,26 @@ impl SharedToken {
             token: DEV_TOKEN.to_string(),
         }
     }
+
+    /// Parse an `"id:token"` spec (the same shape as one server entry). The
+    /// token may itself contain `:`; only the first separates the key id.
+    pub fn from_spec(spec: &str) -> Option<Self> {
+        let (id, token) = spec.split_once(':')?;
+        Some(Self {
+            key_id: id.trim().parse().ok()?,
+            token: token.to_string(),
+        })
+    }
+
+    /// The token from the `NETPLAY_TOKEN` env var (`"id:token"`), or the dev
+    /// default when it's unset or malformed. Keeps the real shared secret out
+    /// of the binary — it's supplied at runtime, not baked in.
+    pub fn from_env_or_dev() -> Self {
+        std::env::var("NETPLAY_TOKEN")
+            .ok()
+            .and_then(|spec| Self::from_spec(&spec))
+            .unwrap_or_else(Self::dev)
+    }
 }
 
 impl AuthProvider for SharedToken {
@@ -213,5 +233,31 @@ fn server_msg_to_event(msg: ServerMsg) -> NetEvent {
         ServerMsg::Game(payload) => NetEvent::Game(payload),
         ServerMsg::OpponentLeft => NetEvent::OpponentLeft,
         ServerMsg::Error(message) => NetEvent::Error(message),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SharedToken;
+
+    #[test]
+    fn from_spec_parses_id_and_token() {
+        let t = SharedToken::from_spec("2:9f3c").expect("valid spec");
+        assert_eq!(t.key_id, 2);
+        assert_eq!(t.token, "9f3c");
+    }
+
+    #[test]
+    fn from_spec_keeps_colons_in_the_token() {
+        // Only the first colon separates the key id.
+        let t = SharedToken::from_spec("7:ab:cd").expect("valid spec");
+        assert_eq!(t.key_id, 7);
+        assert_eq!(t.token, "ab:cd");
+    }
+
+    #[test]
+    fn from_spec_rejects_malformed() {
+        assert!(SharedToken::from_spec("no-colon").is_none());
+        assert!(SharedToken::from_spec("notanumber:tok").is_none());
     }
 }

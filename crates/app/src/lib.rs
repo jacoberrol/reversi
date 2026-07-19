@@ -3,8 +3,9 @@
 //! Exposed as a library (with a thin `main.rs`) so the offscreen lobby mockup
 //! example can reuse the real lobby code.
 //!
-//! No args launches single-player vs the AI; `--server ADDR --name NAME`
-//! connects to a relay server for online play.
+//! No args launches single-player vs the AI. `--online` connects to the public
+//! relay ([`DEFAULT_RELAY_URL`]); `--server URL` overrides it with a specific
+//! relay (e.g. a local `ws://` server). `--name NAME` sets the display name.
 
 pub mod anim;
 pub mod egui_layer;
@@ -25,6 +26,11 @@ use winit::keyboard::Key;
 use winit::window::{Window, WindowId};
 
 use gpu::WindowState;
+
+/// The public relay's client-facing URL. TLS is terminated by the exe.dev proxy,
+/// which forwards to the plain-`ws://` relay on the VM. Baked in so `--online`
+/// needs no address; `--server URL` overrides it (e.g. a local dev server).
+pub const DEFAULT_RELAY_URL: &str = "wss://relay.netplay.oliverj.network";
 
 /// How the app was launched.
 enum Launch {
@@ -55,8 +61,10 @@ impl ApplicationHandler<NetEvent> for App {
 
         if let Launch::Network { addr, name } = &self.launch {
             // Connection is async on the network thread; failures arrive as
-            // `NetEvent::Error`/`Disconnected` and show in the lobby.
-            let auth = netplay_client::SharedToken::dev();
+            // `NetEvent::Error`/`Disconnected` and show in the lobby. The token
+            // comes from the `NETPLAY_TOKEN` env var (dev default if unset), so
+            // the real shared secret is never baked into the binary.
+            let auth = netplay_client::SharedToken::from_env_or_dev();
             let handle = netplay_client::connect(addr, name, &auth, self.proxy.clone());
             state.enter_network(handle, name.clone());
         }
@@ -144,11 +152,13 @@ pub fn run() {
     event_loop.run_app(&mut app).expect("event loop error");
 }
 
-/// Parse `--server ADDR` / `--name NAME`; absence of `--server` means
-/// single-player.
+/// Parse the launch flags. `--online` joins the public relay; `--server URL`
+/// overrides it with a specific relay; `--name NAME` sets the display name.
+/// With neither `--online` nor `--server`, launch single-player.
 fn parse_launch() -> Launch {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut server = None;
+    let mut online = false;
     let mut name = None;
     let mut i = 0;
     while i < args.len() {
@@ -157,6 +167,10 @@ fn parse_launch() -> Launch {
                 server = args.get(i + 1).cloned();
                 i += 2;
             }
+            "--online" => {
+                online = true;
+                i += 1;
+            }
             "--name" => {
                 name = args.get(i + 1).cloned();
                 i += 2;
@@ -164,7 +178,9 @@ fn parse_launch() -> Launch {
             _ => i += 1,
         }
     }
-    match server {
+    // An explicit `--server` wins; otherwise `--online` uses the baked-in relay.
+    let addr = server.or_else(|| online.then(|| DEFAULT_RELAY_URL.to_string()));
+    match addr {
         Some(addr) => Launch::Network {
             addr,
             name: name.unwrap_or_else(|| "Player".to_string()),

@@ -1,0 +1,34 @@
+# Managed by Ansible (deploy/ansible/playbook.yml) — do not edit by hand.
+[Unit]
+Description=Reversi netplay relay server
+Documentation=https://github.com/jacoberrol/reversi
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ netplay_user }}
+Group={{ netplay_user }}
+# Bind loopback only: the exe.dev proxy terminates TLS and forwards to this port.
+ExecStart={{ netplay_bin }} 127.0.0.1:{{ netplay_port }}
+EnvironmentFile={{ netplay_env_file }}
+Restart=on-failure
+RestartSec=2
+
+# Hardening — the relay needs nothing but a TCP socket and its env file.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
