@@ -26,6 +26,7 @@ pub type PlayerId = u64;
 
 /// A player as advertised in the lobby presence list.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct PlayerInfo {
     pub id: PlayerId,
     pub name: String,
@@ -34,6 +35,7 @@ pub struct PlayerInfo {
 /// An abstract seat in a match; seat 0 moves first. The game maps this to its
 /// own player type (e.g. Reversi: seat 0 = Black).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Seat(pub u8);
 
 /// The reference authorization scheme's credential: a versioned shared token.
@@ -46,6 +48,7 @@ pub struct Seat(pub u8);
 /// it is not tamper-proofing. Real closure comes from attestation later, behind
 /// the same seam.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct SharedTokenCredential {
     pub key_id: u16,
     pub token: String,
@@ -73,6 +76,7 @@ pub const DEV_TOKEN: &str = "reversi-dev-token";
 /// `"type"` discriminator (e.g. `{"type":"Invite","to":3}`), so non-Rust
 /// clients can model it as a conventional tagged union.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "type")]
 pub enum ClientMsg {
     /// First message on connect: the player's display name, protocol version,
@@ -97,6 +101,7 @@ pub enum ClientMsg {
 ///
 /// Internally tagged with a `"type"` discriminator, like [`ClientMsg`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "type")]
 pub enum ServerMsg {
     /// The other players currently available in the lobby.
@@ -123,6 +128,26 @@ pub fn to_bytes<T: Serialize>(msg: &T) -> Vec<u8> {
 /// Parse a message from a WebSocket message body.
 pub fn decode<T: DeserializeOwned>(bytes: &[u8]) -> serde_json::Result<T> {
     serde_json::from_slice(bytes)
+}
+
+/// A self-describing service manifest: metadata plus the JSON Schema of every
+/// wire message, generated from the Rust types so it can't drift. Served at the
+/// relay's `/schema` endpoint for non-Rust clients (e.g. an admin tool). Behind
+/// the `schema` feature so only the server pulls in `schemars`.
+#[cfg(feature = "schema")]
+pub fn service_descriptor() -> serde_json::Value {
+    serde_json::json!({
+        "service": "reversi-netplay-relay",
+        "protocolVersion": PROTOCOL_VERSION,
+        "transport": "websocket-json",
+        "description": "Game-agnostic netplay relay. Each WebSocket message is one \
+            JSON document, internally tagged with a \"type\" field. The in-game \
+            action rides as opaque bytes in Game.payload.",
+        "messages": {
+            "ClientMsg": serde_json::to_value(schemars::schema_for!(ClientMsg)).unwrap(),
+            "ServerMsg": serde_json::to_value(schemars::schema_for!(ServerMsg)).unwrap(),
+        },
+    })
 }
 
 #[cfg(test)]
@@ -205,6 +230,21 @@ mod tests {
             let decoded: ServerMsg = decode(&to_bytes(&msg)).unwrap();
             assert_eq!(decoded, msg);
         }
+    }
+
+    #[cfg(feature = "schema")]
+    #[test]
+    fn service_descriptor_has_metadata_and_message_schemas() {
+        let d = service_descriptor();
+        assert_eq!(d["protocolVersion"], PROTOCOL_VERSION);
+        assert_eq!(d["transport"], "websocket-json");
+        // Both message schemas are present and non-empty.
+        assert!(d["messages"]["ClientMsg"].is_object());
+        assert!(d["messages"]["ServerMsg"].is_object());
+        // The tagged shape is reflected in the schema (the "type" discriminator).
+        let text = d.to_string();
+        assert!(text.contains("\"type\""));
+        assert!(text.contains("Invite"));
     }
 
     #[test]
