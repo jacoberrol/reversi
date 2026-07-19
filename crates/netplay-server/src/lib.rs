@@ -12,6 +12,7 @@ pub mod auth;
 pub mod limits;
 pub mod lobby;
 pub mod openapi;
+pub mod player;
 pub mod store;
 
 use std::convert::Infallible;
@@ -109,16 +110,19 @@ async fn serve_connection(stream: TcpStream, conn: Conn) {
 }
 
 /// Route one request: admin REST (admin host), a WebSocket upgrade, or 404.
-async fn route(
-    mut req: Request<Incoming>,
-    conn: Conn,
-) -> Result<Response<Full<Bytes>>, Infallible> {
+async fn route(req: Request<Incoming>, conn: Conn) -> Result<Response<Full<Bytes>>, Infallible> {
     // The admin host serves the REST control plane.
     if request_host(&req).as_deref() == Some(conn.admin_host.as_ref()) {
         return Ok(admin::route(req, conn.pool, conn.lobby_tx).await);
     }
 
-    // Otherwise the game: a WebSocket upgrade → hand the socket to the relay.
+    // The game host serves player auth over REST (login/register → token)...
+    let mut req = match player::route(req, &conn.pool).await {
+        Ok(response) => return Ok(response),
+        Err(req) => req,
+    };
+
+    // ...and gameplay over WebSocket: an upgrade → hand the socket to the relay.
     if hyper_tungstenite::is_upgrade_request(&req) {
         match hyper_tungstenite::upgrade(&mut req, None) {
             Ok((response, websocket)) => {
@@ -179,12 +183,8 @@ async fn relay(
                 return Ok(());
             }
         };
-    let (name, credential) = match first {
-        Some(ClientMsg::Hello {
-            name,
-            protocol,
-            credential,
-        }) if protocol == PROTOCOL_VERSION => (name, credential),
+    let token = match first {
+        Some(ClientMsg::Hello { protocol, token }) if protocol == PROTOCOL_VERSION => token,
         Some(ClientMsg::Hello { .. }) => {
             let _ = outbox
                 .send(ServerMsg::Error {
@@ -196,9 +196,13 @@ async fn relay(
         _ => return Ok(()),
     };
 
-    // Authorize (log in or register) before the client can touch the lobby.
-    match auth.verify(&credential).await {
-        Ok(identity) => println!("authorized ({})", identity.label),
+    // The token (from REST login/register) must name a live session; the account's
+    // display name comes from it, never from the client.
+    let name = match auth.verify(&token).await {
+        Ok(identity) => {
+            println!("authorized (account {})", identity.name);
+            identity.name
+        }
         Err(e) => {
             let _ = outbox
                 .send(ServerMsg::Error {
@@ -207,7 +211,7 @@ async fn relay(
                 .await;
             return Ok(());
         }
-    }
+    };
 
     let (reply_tx, reply_rx) = oneshot::channel();
     if lobby_tx

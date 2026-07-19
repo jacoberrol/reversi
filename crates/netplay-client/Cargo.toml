@@ -11,14 +11,25 @@ license.workspace = true
 [dependencies]
 netplay-protocol.workspace = true
 winit.workspace = true
-# The auth credential is arbitrary JSON the server interprets.
 serde_json.workspace = true
+serde = { version = "1", features = ["derive"] }
 # WebSocket over TLS (wss://), on a tokio runtime confined to the network thread.
 # The winit event loop stays synchronous; this runtime never touches it.
 tokio = { workspace = true, features = ["rt", "macros"] }
 tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
+# REST auth: log in / register → bearer token (presented in the WS Hello). ureq is
+# blocking (the auth call runs on the network thread before the async WS loop) and
+# uses rustls + ring — matching the WebSocket path, no OpenSSL, no aws-lc C build.
+ureq = { version = "2", features = ["json"] }
 # rustls 0.23 requires a crypto provider be selected explicitly. We enable the
 # `ring` provider here and install it as the process default (see lib.rs) so the
 # wss:// handshake doesn't panic looking for one.
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
+
+[dev-dependencies]
+# Integration-test the auth SDK against a real relay (one-directional: the server
+# never depends on the client).
+netplay-server = { path = "../netplay-server" }
+tokio = { workspace = true, features = ["rt", "net"] }
+tempfile = "3"

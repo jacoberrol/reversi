@@ -63,13 +63,14 @@ pub enum CreateError {
     Db(sqlx::Error),
 }
 
-/// Register a new `player` account. Errors with [`CreateError::NameTaken`] if the
-/// name is taken (the `UNIQUE` constraint), else the DB error.
+/// Register a new `player` account, returning its `(id, role)`. Errors with
+/// [`CreateError::NameTaken`] if the name is taken (the `UNIQUE` constraint),
+/// else the DB error.
 pub async fn create_account(
     pool: &SqlitePool,
     name: &str,
     password: &str,
-) -> Result<Role, CreateError> {
+) -> Result<(i64, Role), CreateError> {
     let hash = hash_password(password);
     let result =
         sqlx::query("INSERT INTO users (name, password_hash, role) VALUES (?, ?, 'player')")
@@ -78,7 +79,7 @@ pub async fn create_account(
             .execute(pool)
             .await;
     match result {
-        Ok(_) => Ok(Role::Player),
+        Ok(done) => Ok((done.last_insert_rowid(), Role::Player)),
         Err(sqlx::Error::Database(e)) if e.is_unique_violation() => Err(CreateError::NameTaken),
         Err(e) => Err(CreateError::Db(e)),
     }
@@ -206,6 +207,23 @@ pub async fn session_identity(
     Ok(row.map(|(id, role)| (id, Role::from_db(&role))))
 }
 
+/// The account a bearer token authorizes for gameplay: `(user_id, role, name)`,
+/// or `None` if the token is unknown or expired. Joins the session to its user so
+/// the caller gets the real display name — the client never supplies it.
+pub async fn session_account(
+    pool: &SqlitePool,
+    token: &str,
+) -> Result<Option<(i64, Role, String)>, sqlx::Error> {
+    let row: Option<(i64, String, String)> = sqlx::query_as(
+        "SELECT u.id, s.role, u.name FROM sessions s JOIN users u ON u.id = s.user_id \
+         WHERE s.token_hash = ? AND s.expires_at > datetime('now')",
+    )
+    .bind(sha256_hex(token))
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|(id, role, name)| (id, Role::from_db(&role), name)))
+}
+
 /// Delete every session whose TTL has passed, returning how many were removed.
 /// Because [`session_identity`] never honors an expired token, this only reclaims
 /// storage — it's an operator action (the `prune-tokens` subcommand), deliberately
@@ -264,7 +282,7 @@ mod tests {
     #[tokio::test]
     async fn create_account_registers_a_player_and_rejects_duplicates() {
         let (pool, _dir) = temp_pool().await;
-        let created = create_account(&pool, "alice", "password").await.unwrap();
+        let (_, created) = create_account(&pool, "alice", "password").await.unwrap();
         assert_eq!(created, Role::Player);
         assert_eq!(
             verify_account(&pool, "alice", "password")

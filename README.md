@@ -92,7 +92,7 @@ A Cargo workspace with a strict, one-directional dependency graph
 | `crates/eval` | Position evaluation (heuristics now, ML later) behind a trait. | game-core |
 | `crates/render` | `wgpu` sprite/quad batcher and board geometry. No game logic. | game-core |
 | `crates/netplay-protocol` | Game-agnostic wire format (serde): framing, lobby/match envelope, **opaque game payload**. | — |
-| `crates/netplay-client` | Reusable client transport (WebSocket on a background runtime → winit events). | netplay-protocol |
+| `crates/netplay-client` | Reusable client SDK: REST auth (login/register → token) + WebSocket transport on a background runtime → winit events. | netplay-protocol |
 | `crates/netplay-server` | Reusable relay/matchmaking server (`tokio`, WebSocket). Relays the payload opaquely. | netplay-protocol |
 | `crates/app` | `winit` shell + input + `egui` lobby; defines the Reversi `GameMsg`; the only crate that touches windowing. | render, eval, netplay-*, game-core |
 

@@ -257,6 +257,20 @@ the game WebSocket, which now carries *only* gameplay. Supersedes Stage 9's WS a
   describing the admin REST API, served unauthenticated so a client can discover how to authenticate.
   `just openapi` fetches it.
 
+### Stage 13 — Player auth over REST 🔨
+Mirror the admin split for gameplay: authenticate over REST for a bearer token, present the token on
+the WebSocket. Moves the argon2 check off the socket path (once, not per connect) and unifies auth on
+tokens. Flag-day protocol break (`netplay-protocol` v2).
+- ✅ **Increment 1 — server + protocol + client (one PR, since the protocol change is a flag day).**
+  `POST /login` + `/register` on the game host (`player` module) → `{token, expires_in_hours}` (24h);
+  register creates the account and returns a token in one step. WS `Hello` drops `name`/credential and
+  carries the `token`; `Authenticator::verify` becomes `store::session_account` (token → id/role/name),
+  so the display name comes from the account, never the client. `netplay-client` gains an `auth` SDK
+  (`player_login`/`player_register` + `admin_login`/`admin_durable_token` for a future Rust admin tool)
+  over blocking **ureq** (rustls+ring, no aws-lc/OpenSSL) and `login_and_connect` (REST then WS on the
+  network thread). App `submit_login` just hands over name/password/register.
+- 🔮 **Follow-up — persist a long-lived token** so a returning player skips the login screen (optional).
+
 **Deferred:** separate repo / published crate (until a second consumer exists); N-player /
 spectating / reconnect; client async / WASM browser client.
 
@@ -418,3 +432,14 @@ Record notable plan/scope changes here so the "why" survives.
   token to learn how to get one). Hand-written rather than re-adding the `schemars` derive machinery
   removed in increment 1 — five endpoints don't justify it, and a test asserts every route appears.
   `just openapi` fetches it. Stage 12 complete bar the SSE `/admin/events` increment.
+- 2026-07-19 — Stage 13 increment 1: player auth moved to REST. `POST /login`/`/register` on the game
+  host (`player` module) mint a session token (`{token, expires_in_hours}`, 24h); the WS `Hello` now
+  carries that **token** instead of a name + `{name,password}` credential, and `Authenticator::verify`
+  is a `store::session_account` lookup (token → id/role/name) — the display name comes from the account.
+  `netplay-protocol` bumped to **v2** (flag-day: `Hello { protocol, token }`). `netplay-client` gained
+  an `auth` SDK (`player_login`/`player_register` + `admin_login`/`admin_durable_token`) over blocking
+  **ureq** (rustls+ring — avoids reqwest's aws-lc C build) and `login_and_connect` (REST then WS on the
+  network thread); the app stopped hand-building credentials. `store::create_account` now returns the
+  new row id. Because the protocol change breaks the client, server + protocol + client landed in one
+  PR to keep `main` green. Tested: player REST status codes, WS token accept/reject, and a
+  `netplay-client` integration test hitting a real relay.

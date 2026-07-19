@@ -127,10 +127,11 @@ Rust server on a cloud VM. We build the real topology now and stage toward that.
   minimal `hyper` HTTP/1 front per connection and routes on the requested hostname (the exe.dev proxy
   forwards it as `X-Forwarded-Host`, falling back to `Host`): the admin host
   (`admin.netplay.oliverj.network`, configurable via `NETPLAY_ADMIN_HOST`) serves the **REST admin
-  API**; every other host is the **game** — a WebSocket upgrade (`hyper-tungstenite`) handed to the
-  relay. Both hostnames resolve to the same IP:port and the proxy forwards both, so the split needs
-  no extra proxy listener. The WebSocket now carries *only* gameplay (`Hello`/`Invite`/`Accept`/
-  `Decline`/`Game` in, presence/match/game out) — no admin messages ride it.
+  API**; every other host is the **game host** — player auth over REST (`POST /login`/`/register`,
+  Stage 13) plus the gameplay WebSocket upgrade (`hyper-tungstenite`) handed to the relay. Both
+  hostnames resolve to the same IP:port and the proxy forwards both, so the split needs no extra proxy
+  listener. The WebSocket now carries *only* gameplay (`Hello`/`Invite`/`Accept`/`Decline`/`Game` in,
+  presence/match/game out) — no admin messages ride it, and `Hello` carries just a session token.
   - **Auth: bearer sessions.** `POST /admin/login` takes `{name, password}`, verifies the account
     (must be an admin), and returns an opaque bearer token; later admin requests carry
     `Authorization: Bearer <token>`. Tokens are 256-bit random, stored **sha256-hashed** in a
@@ -178,12 +179,15 @@ can use, split into `netplay-protocol` / `netplay-server` / `netplay-client`. Th
   player type (Reversi: seat 0 = Black). Keeps the relay game-agnostic.
 - Stays a workspace-internal crate (no separate repo / published crate until a second consumer
   justifies the versioning overhead).
-- **Auth is a seam (Stage 8B).** `Hello` carries an opaque credential — **arbitrary JSON** the
-  authenticator interprets (`{name, password[, register]}` for accounts), not a byte blob, so a Go
-  client sends a normal object. The server's `Authenticator::verify` runs before the client joins the
-  lobby; the relay never inspects the credential, so the shape can change (attestation) without
-  touching the envelope. The implementation is `DbAuth` — accounts-only (Stage 10/11 below); an
-  attestation authenticator could swap in behind the unchanged trait later.
+- **Auth is a seam (Stage 8B; token-based since Stage 13).** Gameplay auth is split like the admin
+  API: a client authenticates over **REST** (`POST /login`/`/register` on the game host → a bearer
+  token) and then presents that **token** in the WebSocket `Hello`. The relay's `Authenticator::verify`
+  runs before the client joins the lobby and only validates the token (a session lookup — no argon2 on
+  the socket path); the account's display name and role come from the token, never from the client.
+  This moved the expensive credential check off every connect and out of the envelope. The credential
+  *shape* (`{name, password}`, or an attestation blob later) now lives entirely at the REST layer, so
+  a new scheme changes only that handler — the socket contract is uniformly "present a valid token."
+  Earlier (Stage 8B–11) the credential rode opaquely inside `Hello` itself; REST auth superseded that.
 - **Rate limiting (Stage 8C, done).** Server-side, before the lobby, drop-and-log: a handshake
   timeout, per-IP concurrency + new-connection rate, a per-connection inbound message bucket, and a
   lobby player cap. Tunable consts in `netplay-server::limits`; auth and rate-limit are separate
@@ -220,8 +224,9 @@ shared-token deterrence gate and anonymous-play decisions deliberately. Decision
   `ProtectSystem=strict`); the DB path is `NETPLAY_DB`. Since accounts are server infrastructure the
   store is a `netplay-server` module — this does make the "reusable relay" stateful, recorded here
   rather than left to drift.
-- Because the `Hello` credential is **opaque JSON**, moving auth from `{key_id, token}` to account
-  credentials needs no protocol/wire change — only the authenticator's interpretation changes.
+- Account credentials (`{name, password}`) are checked by the REST auth handlers (`admin`/`player`
+  modules), which mint sessions; the WebSocket only ever sees a bearer token (Stage 13). The
+  `sessions` table (Stage 12) is shared by admin and player tokens — role distinguishes them.
 
 ### UI: egui for menus/lobby (decided)
 On-screen text and the lobby use **egui** (`egui` + `egui-wgpu`, on our wgpu 0.20). We evaluated
@@ -239,4 +244,6 @@ screen state so a custom UI could replace it.
 - ✅ Accounts + RBAC on SQLite (Stage 10): argon2id accounts; admin surface gated by role.
 - ✅ Accounts-only login/register on the title screen (Stage 11): shared token removed.
 - Admin REST control plane on its own host, bearer sessions + OpenAPI discovery (Stage 12): SSE events to follow.
+- ✅ Player auth over REST (Stage 13): `POST /login`/`/register` → token; the WS `Hello` carries the
+  token, and `netplay-client` gains an `auth` SDK (player + admin). `netplay-protocol` v2.
 - Out of scope for now: reconnect, spectating, NAT traversal.
