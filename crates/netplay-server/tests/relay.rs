@@ -192,6 +192,51 @@ async fn admin_queries_report_players_matches_and_stats() {
 }
 
 #[tokio::test]
+async fn admin_subscription_streams_live_events() {
+    let addr = start_server().await;
+    let mut admin = connect_ws(addr, "admin", dev_credential()).await;
+    send(&mut admin, ClientMsg::SubscribeEvents).await;
+
+    // A join is pushed to the subscriber (with the new player's id).
+    let mut alice = connect_ws(addr, "Alice", dev_credential()).await;
+    let alice_id = loop {
+        if let ServerMsg::PlayerJoined { player } = recv(&mut admin).await {
+            if player.name == "Alice" {
+                break player.id;
+            }
+        }
+    };
+    let mut bob = connect_ws(addr, "Bob", dev_credential()).await;
+    let bob_id = loop {
+        if let ServerMsg::PlayerJoined { player } = recv(&mut admin).await {
+            if player.name == "Bob" {
+                break player.id;
+            }
+        }
+    };
+
+    // Pairing them is pushed as MatchStarted (Alice, the inviter, is seat 0).
+    send(&mut alice, ClientMsg::Invite { to: bob_id }).await;
+    send(&mut bob, ClientMsg::Accept { inviter: alice_id }).await;
+    let pairing = loop {
+        if let ServerMsg::MatchStarted { pairing } = recv(&mut admin).await {
+            break pairing;
+        }
+    };
+    assert_eq!(pairing.seat0.name, "Alice");
+    assert_eq!(pairing.seat1.name, "Bob");
+
+    // A disconnect is pushed as PlayerLeft.
+    drop(bob);
+    let left = loop {
+        if let ServerMsg::PlayerLeft { id } = recv(&mut admin).await {
+            break id;
+        }
+    };
+    assert_eq!(left, bob_id);
+}
+
+#[tokio::test]
 async fn schema_endpoint_serves_the_descriptor() {
     let addr = start_server().await;
     // A plain HTTP GET (no WebSocket upgrade) on the same endpoint.

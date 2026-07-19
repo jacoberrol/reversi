@@ -122,6 +122,9 @@ pub enum ClientMsg {
     ListMatches,
     /// Fetch a snapshot of relay counters.
     GetStats,
+    /// Subscribe to the live event stream (player joined/left, match started).
+    /// The server pushes `PlayerJoined`/`PlayerLeft`/`MatchStarted` thereafter.
+    SubscribeEvents,
 }
 
 /// A message from the server to a client.
@@ -153,6 +156,14 @@ pub enum ServerMsg {
     Matches { matches: Vec<MatchInfo> },
     /// A relay counter snapshot (reply to `GetStats`).
     Stats { stats: ServerStats },
+
+    // Admin/control event stream (pushed to `SubscribeEvents` subscribers).
+    /// A player connected.
+    PlayerJoined { player: PlayerInfo },
+    /// A player disconnected.
+    PlayerLeft { id: PlayerId },
+    /// Two players were paired.
+    MatchStarted { pairing: MatchInfo },
 }
 
 /// Serialize a message to bytes (the body of one WebSocket message).
@@ -214,6 +225,7 @@ mod tests {
         round_trip_client(ClientMsg::ListPlayers);
         round_trip_client(ClientMsg::ListMatches);
         round_trip_client(ClientMsg::GetStats);
+        round_trip_client(ClientMsg::SubscribeEvents);
     }
 
     #[test]
@@ -287,6 +299,25 @@ mod tests {
                     players_online: 3,
                     matches_active: 1,
                     uptime_seconds: 42,
+                },
+            },
+            ServerMsg::PlayerJoined {
+                player: PlayerInfo {
+                    id: 5,
+                    name: "Dave".into(),
+                },
+            },
+            ServerMsg::PlayerLeft { id: 5 },
+            ServerMsg::MatchStarted {
+                pairing: MatchInfo {
+                    seat0: PlayerInfo {
+                        id: 1,
+                        name: "Bob".into(),
+                    },
+                    seat1: PlayerInfo {
+                        id: 2,
+                        name: "Carol".into(),
+                    },
                 },
             },
         ] {
