@@ -10,6 +10,8 @@ use std::collections::HashMap;
 use netplay_protocol::{PlayerInfo, Seat, ServerMsg};
 use tokio::sync::{mpsc, oneshot};
 
+use crate::limits::MAX_LOBBY_PLAYERS;
+
 pub use netplay_protocol::PlayerId;
 
 /// Commands sent to the lobby by connection tasks.
@@ -17,7 +19,7 @@ pub enum LobbyCmd {
     Join {
         name: String,
         outbox: mpsc::Sender<ServerMsg>,
-        reply: oneshot::Sender<PlayerId>,
+        reply: oneshot::Sender<Option<PlayerId>>,
     },
     Invite {
         from: PlayerId,
@@ -69,6 +71,14 @@ impl Lobby {
                 outbox,
                 reply,
             } => {
+                if self.players.len() >= MAX_LOBBY_PLAYERS {
+                    let _ = outbox
+                        .send(ServerMsg::Error("lobby full".to_string()))
+                        .await;
+                    let _ = reply.send(None);
+                    eprintln!("rate-limit: lobby full, rejected {name}");
+                    return;
+                }
                 let id = self.next_id;
                 self.next_id += 1;
                 self.players.insert(
@@ -79,7 +89,7 @@ impl Lobby {
                         partner: None,
                     },
                 );
-                let _ = reply.send(id);
+                let _ = reply.send(Some(id));
                 println!("player {id} joined");
                 self.broadcast_presence().await;
             }

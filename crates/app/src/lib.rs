@@ -54,13 +54,11 @@ impl ApplicationHandler<NetEvent> for App {
         let mut state = WindowState::new(window);
 
         if let Launch::Network { addr, name } = &self.launch {
+            // Connection is async on the network thread; failures arrive as
+            // `NetEvent::Error`/`Disconnected` and show in the lobby.
             let auth = netplay_client::SharedToken::dev();
-            match netplay_client::connect(addr, name, &auth, self.proxy.clone()) {
-                Ok(handle) => state.enter_network(handle, name.clone()),
-                Err(e) => {
-                    state.set_net_error(name.clone(), format!("could not connect to {addr}: {e}"))
-                }
-            }
+            let handle = netplay_client::connect(addr, name, &auth, self.proxy.clone());
+            state.enter_network(handle, name.clone());
         }
 
         state.request_redraw();

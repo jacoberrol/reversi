@@ -37,8 +37,8 @@ do not "improve" the architecture toward generic defaults.
 - Dependency direction: `app → {render, eval, netplay-protocol, netplay-client} → game-core`;
   `netplay-{server,client} → netplay-protocol`. Never the reverse.
 - **I/O and async live outside the pure crates.** `game-core`/`eval` stay pure (no I/O, no async).
-  Networking I/O lives in `netplay-client` (async-free — blocking TCP on a background thread) and
-  `netplay-server` (tokio). See DESIGN.md §9.
+  Networking is WebSocket: `netplay-server` (tokio) and `netplay-client` (WebSocket on a tokio
+  runtime confined to a background thread — the winit loop stays synchronous). See DESIGN.md §9.
 - **No ECS, no Bevy** (recorded decision — plain structs; see DESIGN.md §8 / ECS note).
 - Game pieces are procedural (shaders); generated images are for tiles/backgrounds only.
 

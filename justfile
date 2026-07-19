@@ -14,14 +14,14 @@ test:
 run:
     cargo run -p app
 
-# Run the relay/matchmaking server (localhost:5000 by default).
+# Run the relay/matchmaking server (binds host:port; plain WebSocket).
 serve ADDR="127.0.0.1:5000":
     cargo run -p netplay-server -- {{ADDR}}
 
-# Launch the game in online mode, connecting to a relay server.
-# Two of these (with the same ADDR) auto-match and play each other.
-play ADDR="127.0.0.1:5000" NAME="Player":
-    cargo run -p app -- --server {{ADDR}} --name {{NAME}}
+# Launch the game in online mode, connecting to a relay by WebSocket URL.
+# `URL` is ws://host:port locally, or wss://host for a TLS-fronted deploy.
+play URL="ws://127.0.0.1:5000" NAME="Player":
+    cargo run -p app -- --server {{URL}} --name {{NAME}}
 
 # Stops the server automatically when both windows close (or on Ctrl-C). Uses
 # port 5099 to avoid clashing with a manual `just serve`. In one window click
@@ -38,9 +38,9 @@ demo:
     trap 'kill "${server_pid}" 2>/dev/null || true' EXIT
     sleep 1
     echo "opening two windows (Alice, Bob) against ${addr}"
-    ./target/debug/app --server "${addr}" --name Alice &
+    ./target/debug/app --server "ws://${addr}" --name Alice &
     alice=$!
-    ./target/debug/app --server "${addr}" --name Bob &
+    ./target/debug/app --server "ws://${addr}" --name Bob &
     bob=$!
     wait "${alice}" "${bob}"
 

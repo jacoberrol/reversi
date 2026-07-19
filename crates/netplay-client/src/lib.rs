@@ -1,21 +1,21 @@
-//! Reusable client transport for the netplay layer.
+//! Reusable client transport for the netplay layer (WebSocket).
 //!
-//! Async-free: `TcpStream::try_clone` splits the socket into an independent read
-//! half and write half. A background thread blocks on reads and forwards decoded
-//! [`NetEvent`]s to the winit event loop via an [`EventLoopProxy`]; the main
-//! thread writes outgoing messages through [`NetHandle`]. No locks, no runtime.
+//! The winit event loop stays synchronous. Networking runs on a **dedicated
+//! background thread** with its own single-threaded tokio runtime — the runtime
+//! never touches the main loop. That thread owns the WebSocket, forwards decoded
+//! [`NetEvent`]s to the event loop via an [`EventLoopProxy`], and drains an
+//! outgoing channel written by [`NetHandle`] on the main thread.
 //!
 //! The in-game action is opaque here: [`NetHandle::game`] sends a `Vec<u8>` and
 //! [`NetEvent::Game`] delivers one. The game defines and codes its own payload.
 
-use std::io::{self, Write};
-use std::net::TcpStream;
-use std::thread;
-
+use futures_util::{SinkExt, StreamExt};
 use netplay_protocol::{
     ClientMsg, PlayerId, PlayerInfo, Seat, ServerMsg, SharedTokenCredential, DEV_KEY_ID, DEV_TOKEN,
     PROTOCOL_VERSION,
 };
+use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
+use tokio_tungstenite::tungstenite::Message;
 use winit::event_loop::EventLoopProxy;
 
 /// Supplies the opaque authorization credential sent in the handshake. A baked
@@ -67,93 +67,141 @@ pub enum NetEvent {
     Game(Vec<u8>),
     /// The opponent disconnected or resigned (server-side).
     OpponentLeft,
-    /// The connection closed.
+    /// The connection closed (or never opened).
     Disconnected,
     /// A protocol/connection error.
     Error(String),
 }
 
-/// The write side of the connection. Held by the main thread to send messages.
+/// Sends outgoing messages to the network thread. Held by the main thread.
 pub struct NetHandle {
-    writer: TcpStream,
+    tx: UnboundedSender<ClientMsg>,
 }
 
 impl NetHandle {
     /// Send an opaque in-game payload to the opponent (best effort; a broken
-    /// connection surfaces as [`NetEvent::Disconnected`] on the read thread).
+    /// connection surfaces as [`NetEvent::Disconnected`]).
     pub fn game(&mut self, payload: Vec<u8>) {
-        self.send_client(ClientMsg::Game(payload));
+        let _ = self.tx.send(ClientMsg::Game(payload));
     }
 
-    /// Invite another player (by id) to a game.
     pub fn invite(&mut self, to: PlayerId) {
-        self.send_client(ClientMsg::Invite { to });
+        let _ = self.tx.send(ClientMsg::Invite { to });
     }
 
-    /// Accept an invite from `inviter`.
     pub fn accept(&mut self, inviter: PlayerId) {
-        self.send_client(ClientMsg::Accept { inviter });
+        let _ = self.tx.send(ClientMsg::Accept { inviter });
     }
 
-    /// Decline an invite from `inviter`.
     pub fn decline(&mut self, inviter: PlayerId) {
-        self.send_client(ClientMsg::Decline { inviter });
-    }
-
-    fn send_client(&mut self, msg: ClientMsg) {
-        let _ = netplay_protocol::write_msg(&mut self.writer, &msg);
-        let _ = self.writer.flush();
+        let _ = self.tx.send(ClientMsg::Decline { inviter });
     }
 }
 
-/// Connect to `addr`, send the handshake (with `auth`'s credential), and spawn
-/// the read thread. Returns the write handle; incoming messages arrive as
-/// [`NetEvent`]s on `proxy`.
+/// Connect to a WebSocket `url` (`ws://…` or `wss://…`) and spawn the network
+/// thread. Returns the send handle immediately; connection results and incoming
+/// messages arrive as [`NetEvent`]s on `proxy`.
 pub fn connect(
-    addr: &str,
+    url: &str,
     name: &str,
     auth: &impl AuthProvider,
     proxy: EventLoopProxy<NetEvent>,
-) -> io::Result<NetHandle> {
-    let read_half = TcpStream::connect(addr)?;
-    let mut writer = read_half.try_clone()?;
+) -> NetHandle {
+    let (tx, rx) = mpsc::unbounded_channel::<ClientMsg>();
+    let hello = ClientMsg::Hello {
+        name: name.to_string(),
+        protocol: PROTOCOL_VERSION,
+        credential: auth.credential(),
+    };
+    let url = url.to_string();
 
-    netplay_protocol::write_msg(
-        &mut writer,
-        &ClientMsg::Hello {
-            name: name.to_string(),
-            protocol: PROTOCOL_VERSION,
-            credential: auth.credential(),
-        },
-    )?;
-    writer.flush()?;
+    std::thread::spawn(move || {
+        let runtime = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(runtime) => runtime,
+            Err(e) => {
+                let _ = proxy.send_event(NetEvent::Error(format!("runtime error: {e}")));
+                return;
+            }
+        };
+        runtime.block_on(io_loop(url, hello, proxy, rx));
+    });
 
-    thread::spawn(move || read_loop(read_half, proxy));
-    Ok(NetHandle { writer })
+    NetHandle { tx }
 }
 
-fn read_loop(mut reader: TcpStream, proxy: EventLoopProxy<NetEvent>) {
-    loop {
-        let event = match netplay_protocol::read_frame(&mut reader) {
-            Ok(Some(body)) => match netplay_protocol::decode::<ServerMsg>(&body) {
-                Ok(msg) => server_msg_to_event(msg),
-                Err(_) => NetEvent::Error("malformed message from server".to_string()),
-            },
-            // Clean EOF or read error: the connection is gone.
-            Ok(None) | Err(_) => NetEvent::Disconnected,
-        };
-        let terminal = matches!(
-            event,
-            NetEvent::Disconnected | NetEvent::OpponentLeft | NetEvent::Error(_)
-        );
-        // If the event loop has exited, stop.
-        if proxy.send_event(event).is_err() {
-            break;
+async fn io_loop(
+    url: String,
+    hello: ClientMsg,
+    proxy: EventLoopProxy<NetEvent>,
+    mut outgoing: UnboundedReceiver<ClientMsg>,
+) {
+    let ws = match tokio_tungstenite::connect_async(url.as_str()).await {
+        Ok((ws, _response)) => ws,
+        Err(e) => {
+            let _ = proxy.send_event(NetEvent::Error(format!("could not connect: {e}")));
+            return;
         }
-        if terminal {
-            break;
+    };
+    let (mut sink, mut source) = ws.split();
+
+    if sink
+        .send(Message::binary(netplay_protocol::to_bytes(&hello)))
+        .await
+        .is_err()
+    {
+        let _ = proxy.send_event(NetEvent::Disconnected);
+        return;
+    }
+
+    loop {
+        tokio::select! {
+            incoming = source.next() => match incoming {
+                Some(Ok(Message::Binary(bytes))) => {
+                    if !forward(&proxy, &bytes) { break; }
+                }
+                Some(Ok(Message::Text(text))) => {
+                    if !forward(&proxy, text.as_bytes()) { break; }
+                }
+                Some(Ok(Message::Close(_))) | None => {
+                    let _ = proxy.send_event(NetEvent::Disconnected);
+                    break;
+                }
+                // Ping/Pong/Frame — tungstenite handles keepalive itself.
+                Some(Ok(_)) => {}
+                Some(Err(_)) => {
+                    let _ = proxy.send_event(NetEvent::Disconnected);
+                    break;
+                }
+            },
+            outgoing = outgoing.recv() => match outgoing {
+                Some(msg) => {
+                    if sink
+                        .send(Message::binary(netplay_protocol::to_bytes(&msg)))
+                        .await
+                        .is_err()
+                    {
+                        let _ = proxy.send_event(NetEvent::Disconnected);
+                        break;
+                    }
+                }
+                // The handle was dropped (the app is closing): stop.
+                None => break,
+            },
         }
     }
+}
+
+/// Decode a server message and forward it. Returns `false` if the event loop has
+/// exited (stop the network thread).
+fn forward(proxy: &EventLoopProxy<NetEvent>, bytes: &[u8]) -> bool {
+    let event = match netplay_protocol::decode::<ServerMsg>(bytes) {
+        Ok(msg) => server_msg_to_event(msg),
+        Err(_) => NetEvent::Error("malformed message from server".to_string()),
+    };
+    proxy.send_event(event).is_ok()
 }
 
 fn server_msg_to_event(msg: ServerMsg) -> NetEvent {

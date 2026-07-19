@@ -60,15 +60,15 @@ just demo   # builds, starts a relay, and opens two lobby windows that can invit
 Or run the pieces yourself (three terminals):
 
 ```sh
-just serve                       # start the relay on 127.0.0.1:5000
-just play 127.0.0.1:5000 Alice   # window 1: lobby
-just play 127.0.0.1:5000 Bob     # window 2: lobby
+just serve                          # relay listens on 127.0.0.1:5000 (plain ws)
+just play ws://127.0.0.1:5000 Alice # window 1: lobby
+just play ws://127.0.0.1:5000 Bob   # window 2: lobby
 ```
 
 In one window, click **Invite** next to the other player; in the other, click **Accept**. The
 inviter plays Black (moves first). Across two Macs on the same Wi-Fi, run `just serve 0.0.0.0:5000`
-on one and `just play <that-Mac's-IP>:5000 <name>` on each. See [DESIGN.md §9](DESIGN.md) for the
-architecture and the road to internet play.
+on one and `just play ws://<that-Mac's-IP>:5000 <name>` on each. Over the internet the client uses
+`wss://<host>` (TLS terminated by a front proxy). See [DESIGN.md §9](DESIGN.md) for the architecture.
 
 ## Project layout
 
@@ -82,14 +82,14 @@ A Cargo workspace with a strict, one-directional dependency graph
 | `crates/eval` | Position evaluation (heuristics now, ML later) behind a trait. | game-core |
 | `crates/render` | `wgpu` sprite/quad batcher and board geometry. No game logic. | game-core |
 | `crates/netplay-protocol` | Game-agnostic wire format (serde): framing, lobby/match envelope, **opaque game payload**. | — |
-| `crates/netplay-client` | Reusable client transport (blocking TCP → winit events). | netplay-protocol |
-| `crates/netplay-server` | Reusable relay/matchmaking server (`tokio`). Relays the payload opaquely. | netplay-protocol |
+| `crates/netplay-client` | Reusable client transport (WebSocket on a background runtime → winit events). | netplay-protocol |
+| `crates/netplay-server` | Reusable relay/matchmaking server (`tokio`, WebSocket). Relays the payload opaquely. | netplay-protocol |
 | `crates/app` | `winit` shell + input + `egui` lobby; defines the Reversi `GameMsg`; the only crate that touches windowing. | render, eval, netplay-*, game-core |
 
 Keeping `game-core` and `eval` pure means the rules and AI are fully testable with
-`cargo test` alone; I/O and async live only in `netplay-client` (async-free) and
-`netplay-server` (tokio). The netplay layer is game-agnostic (any 2-player turn-based game can
-use it), and the transport is swappable (DESIGN §9).
+`cargo test` alone; networking (WebSocket) lives only in `netplay-client` (on a background
+tokio runtime; the winit loop stays synchronous) and `netplay-server` (tokio). The netplay layer
+is game-agnostic (any 2-player turn-based game can use it), and the transport is swappable (DESIGN §9).
 
 ## Development workflow
 
