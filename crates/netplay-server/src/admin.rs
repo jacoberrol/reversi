@@ -8,7 +8,7 @@
 //! /admin/openapi.json` (unauthenticated) describes the whole surface.
 
 use bytes::Bytes;
-use http_body_util::{BodyExt, Full, Limited};
+use http_body_util::Full;
 use hyper::body::Incoming;
 use hyper::{header, Method, Request, Response, StatusCode};
 use serde::Deserialize;
@@ -16,18 +16,17 @@ use sqlx::SqlitePool;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::lobby::LobbyCmd;
+use crate::rest::{
+    read_json_body, read_json_body_or_default, token_response, Credentials, SESSION_TTL_HOURS,
+};
 use crate::store::{self, Role};
 use crate::{json_ok, query, text};
 
-/// How long a session from `POST /admin/login` stays valid (one work session).
-const SESSION_TTL_HOURS: i64 = 24;
 /// Default lifetime of a durable token from `POST /admin/tokens` (weeks, so a
 /// tool holds it across restarts without re-sending the password).
 const DURABLE_TTL_DAYS: i64 = 30;
 /// Upper bound a caller may request for a durable token.
 const MAX_DURABLE_TTL_DAYS: i64 = 90;
-/// Cap request bodies so a hostile request can't allocate unbounded memory.
-const MAX_LOGIN_BODY: usize = 4096;
 
 /// Route an admin-host request. Never a WebSocket upgrade — pure REST.
 pub async fn route(
@@ -59,32 +58,15 @@ pub async fn route(
     }
 }
 
-#[derive(Deserialize)]
-struct LoginBody {
-    name: String,
-    password: String,
-}
-
 /// Verify an admin login and mint a session bearer token.
 async fn login(req: Request<Incoming>, pool: &SqlitePool) -> Response<Full<Bytes>> {
-    let Ok(collected) = Limited::new(req.into_body(), MAX_LOGIN_BODY)
-        .collect()
-        .await
-    else {
-        return text(StatusCode::BAD_REQUEST, "bad request body");
+    let creds: Credentials = match read_json_body(req, "expected {name, password}").await {
+        Ok(creds) => creds,
+        Err(response) => return response,
     };
-    let Ok(body) = serde_json::from_slice::<LoginBody>(&collected.to_bytes()) else {
-        return text(StatusCode::BAD_REQUEST, "expected {name, password}");
-    };
-    match store::verify_account(pool, &body.name, &body.password).await {
+    match store::verify_account(pool, &creds.name, &creds.password).await {
         Ok(Some((id, Role::Admin))) => {
-            match store::create_session(pool, id, Role::Admin, SESSION_TTL_HOURS).await {
-                Ok(token) => json_ok(
-                    serde_json::json!({ "token": token, "expires_in_hours": SESSION_TTL_HOURS })
-                        .to_string(),
-                ),
-                Err(_) => text(StatusCode::INTERNAL_SERVER_ERROR, "session error"),
-            }
+            token_response(pool, id, Role::Admin, SESSION_TTL_HOURS).await
         }
         Ok(Some((_, Role::Player))) => text(StatusCode::FORBIDDEN, "not an admin"),
         Ok(None) => text(StatusCode::UNAUTHORIZED, "wrong name or password"),
@@ -106,33 +88,16 @@ async fn issue_token(req: Request<Incoming>, pool: &SqlitePool) -> Response<Full
     let Some((user_id, role)) = admin_identity(&req, pool).await else {
         return text(StatusCode::UNAUTHORIZED, "missing or invalid bearer token");
     };
-    // The body is optional; an absent or empty one takes the default lifetime.
-    let Ok(collected) = Limited::new(req.into_body(), MAX_LOGIN_BODY)
-        .collect()
-        .await
-    else {
-        return text(StatusCode::BAD_REQUEST, "bad request body");
-    };
-    let bytes = collected.to_bytes();
-    let body = if bytes.is_empty() {
-        TokenBody::default()
-    } else {
-        match serde_json::from_slice::<TokenBody>(&bytes) {
-            Ok(body) => body,
-            Err(_) => return text(StatusCode::BAD_REQUEST, "expected {days}"),
-        }
+    // The body is optional; an absent/empty one takes the default lifetime.
+    let body = match read_json_body_or_default::<TokenBody>(req, "expected {days}").await {
+        Ok(body) => body,
+        Err(response) => return response,
     };
     let days = body
         .days
         .unwrap_or(DURABLE_TTL_DAYS)
         .clamp(1, MAX_DURABLE_TTL_DAYS);
-    let ttl_hours = days * 24;
-    match store::create_session(pool, user_id, role, ttl_hours).await {
-        Ok(token) => json_ok(
-            serde_json::json!({ "token": token, "expires_in_hours": ttl_hours }).to_string(),
-        ),
-        Err(_) => text(StatusCode::INTERNAL_SERVER_ERROR, "session error"),
-    }
+    token_response(pool, user_id, role, days * 24).await
 }
 
 /// Require an admin bearer, then answer a lobby query as JSON.
@@ -155,8 +120,8 @@ async fn guarded_query<T: serde::Serialize>(
 /// token is missing, invalid, expired, or belongs to a non-admin.
 async fn admin_identity(req: &Request<Incoming>, pool: &SqlitePool) -> Option<(i64, Role)> {
     let token = bearer_token(req)?;
-    match store::session_identity(pool, &token).await {
-        Ok(Some((id, Role::Admin))) => Some((id, Role::Admin)),
+    match store::session_account(pool, &token).await {
+        Ok(Some((id, Role::Admin, _name))) => Some((id, Role::Admin)),
         _ => None,
     }
 }

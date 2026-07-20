@@ -51,7 +51,11 @@ pub fn player_register(base_url: &str, name: &str, password: &str) -> Result<Tok
     post_credentials(base_url, "/register", name, password)
 }
 
-/// Admin login: `POST {base_url}/admin/login` (admin host). For a Rust admin tool.
+/// Admin login: `POST {base_url}/admin/login` (admin host).
+///
+/// Deliberate SDK surface with no in-repo consumer: the current admin tool is
+/// external (a Go TUI), but any future Rust admin tool authenticates through
+/// here rather than hand-rolling HTTP — same rationale as the player half.
 pub fn admin_login(base_url: &str, name: &str, password: &str) -> Result<Token, AuthError> {
     post_credentials(base_url, "/admin/login", name, password)
 }

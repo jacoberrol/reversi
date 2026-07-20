@@ -74,17 +74,27 @@ impl NetHandle {
 /// on `proxy`. Most callers want [`login_and_connect`], which gets the token first.
 pub fn connect(url: &str, token: String, proxy: EventLoopProxy<NetEvent>) -> NetHandle {
     let (tx, rx) = mpsc::unbounded_channel::<ClientMsg>();
+    let url = url.to_string();
+    std::thread::spawn(move || run_io_thread(url, token, proxy, rx));
+    NetHandle { tx }
+}
+
+/// Body of the network thread: build the runtime and run the WebSocket loop,
+/// opening with a `Hello` that presents `token`. Shared by [`connect`] and
+/// [`login_and_connect`].
+fn run_io_thread(
+    url: String,
+    token: String,
+    proxy: EventLoopProxy<NetEvent>,
+    rx: UnboundedReceiver<ClientMsg>,
+) {
     let hello = ClientMsg::Hello {
         protocol: PROTOCOL_VERSION,
         token,
     };
-    let url = url.to_string();
-    std::thread::spawn(move || {
-        if let Some(runtime) = build_runtime(&proxy) {
-            runtime.block_on(io_loop(url, hello, proxy, rx));
-        }
-    });
-    NetHandle { tx }
+    if let Some(runtime) = build_runtime(&proxy) {
+        runtime.block_on(io_loop(url, hello, proxy, rx));
+    }
 }
 
 /// Log in (or register) over REST for a token, then [`connect`] with it — all on
@@ -102,25 +112,18 @@ pub fn login_and_connect(
     let url = url.to_string();
     let (name, password) = (name.to_string(), password.to_string());
     std::thread::spawn(move || {
+        // The blocking auth call runs here, before the async WS loop starts.
         let base = http_origin(&url);
         let result = if register {
             auth::player_register(&base, &name, &password)
         } else {
             auth::player_login(&base, &name, &password)
         };
-        let token = match result {
-            Ok(token) => token.token,
+        match result {
+            Ok(token) => run_io_thread(url, token.token, proxy, rx),
             Err(e) => {
                 let _ = proxy.send_event(NetEvent::Error(e.to_string()));
-                return;
             }
-        };
-        let hello = ClientMsg::Hello {
-            protocol: PROTOCOL_VERSION,
-            token,
-        };
-        if let Some(runtime) = build_runtime(&proxy) {
-            runtime.block_on(io_loop(url, hello, proxy, rx));
         }
     });
     NetHandle { tx }

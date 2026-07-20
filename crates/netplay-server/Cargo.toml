@@ -10,13 +10,14 @@ license.workspace = true
 [dependencies]
 netplay-protocol.workspace = true
 tokio.workspace = true
-# Opaque credentials are arbitrary JSON the authenticator interprets.
+# serde derives the JSON request/response bodies of the REST auth + admin API.
 serde.workspace = true
 serde_json.workspace = true
-# A minimal HTTP/1 front (hyper) serves `GET /schema` and upgrades `/` to a
-# plain WebSocket (hyper-tungstenite). No TLS — the deploy proxy terminates it
-# and forwards ws://. We use hyper-tungstenite's re-exported tungstenite types
-# so the WebSocket version always matches the upgrade machinery.
+# A minimal HTTP/1 front (hyper) serves the REST surfaces (admin control plane,
+# player login/register) and upgrades the game host to a plain WebSocket
+# (hyper-tungstenite). No TLS — the deploy proxy terminates it and forwards
+# ws://. We use hyper-tungstenite's re-exported tungstenite types so the
+# WebSocket version always matches the upgrade machinery.
 hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 hyper-tungstenite = "0.30"
@@ -34,11 +35,8 @@ sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio",
 # Account passwords are argon2id-hashed (pure Rust → musl-clean; salt embedded).
 # `std` pulls in getrandom so `OsRng` is available for salt generation.
 argon2 = { version = "0.5", features = ["std"] }
-# sha256 for hashing high-entropy admin session bearer tokens.
+# sha256 for hashing high-entropy session bearer tokens at rest.
 sha2 = "0.10"
-# Authorizing an account needs an async DB lookup, so the Authenticator trait is
-# async; async-trait makes it work behind `Arc<dyn Authenticator>`.
-async-trait = "0.1"
 
 [dev-dependencies]
 # The relay test drives the server over WebSocket (same version as the runtime

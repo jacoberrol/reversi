@@ -26,15 +26,20 @@ async fn register(addr: SocketAddr, name: &str, password: &str) -> String {
     player_token(addr, "/register", name, password).await
 }
 
-/// POST `{name, password}` to a game-host auth path and return the minted token.
-async fn player_token(addr: SocketAddr, path: &str, name: &str, password: &str) -> String {
+/// POST `{name, password}` to a game-host auth path; returns the raw response.
+async fn post_game(addr: SocketAddr, path: &str, name: &str, password: &str) -> String {
     let body = serde_json::json!({ "name": name, "password": password }).to_string();
     let request = format!(
         "POST {path} HTTP/1.1\r\nHost: {GAME_HOST}\r\nContent-Type: application/json\r\n\
          Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     );
-    let response = http(addr, &request).await;
+    http(addr, &request).await
+}
+
+/// POST `{name, password}` to a game-host auth path and return the minted token.
+async fn player_token(addr: SocketAddr, path: &str, name: &str, password: &str) -> String {
+    let response = post_game(addr, path, name, password).await;
     assert!(
         response.starts_with("HTTP/1.1 200"),
         "{}",
@@ -238,34 +243,28 @@ async fn rejects_a_bad_token() {
 #[tokio::test]
 async fn player_rest_register_and_login_and_their_failures() {
     let (addr, _dir) = start_server().await;
-    let post_game = |path: &'static str, name: &'static str, password: &'static str| async move {
-        let body = serde_json::json!({ "name": name, "password": password }).to_string();
-        let request = format!(
-            "POST {path} HTTP/1.1\r\nHost: {GAME_HOST}\r\nContent-Type: application/json\r\n\
-             Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
-            body.len()
-        );
-        http(addr, &request).await
-    };
 
     // Register succeeds and returns a token.
-    let r = post_game("/register", "Dave", "password").await;
+    let r = post_game(addr, "/register", "Dave", "password").await;
     assert!(r.starts_with("HTTP/1.1 200"), "{}", first_line(&r));
     assert!(!serde_json::from_str::<TokenResp>(body_of(&r))
         .unwrap()
         .token
         .is_empty());
 
-    // A duplicate name is a conflict; a weak password is rejected.
-    let r = post_game("/register", "Dave", "different").await;
+    // A duplicate name is a conflict; weak passwords and huge names are rejected.
+    let r = post_game(addr, "/register", "Dave", "different").await;
     assert!(r.starts_with("HTTP/1.1 409"), "{}", first_line(&r));
-    let r = post_game("/register", "Eve", "short").await;
+    let r = post_game(addr, "/register", "Eve", "short").await;
+    assert!(r.starts_with("HTTP/1.1 400"), "{}", first_line(&r));
+    let long_name = "x".repeat(33);
+    let r = post_game(addr, "/register", &long_name, "password").await;
     assert!(r.starts_with("HTTP/1.1 400"), "{}", first_line(&r));
 
     // Login: right password succeeds, wrong password is unauthorized.
-    let r = post_game("/login", "Dave", "password").await;
+    let r = post_game(addr, "/login", "Dave", "password").await;
     assert!(r.starts_with("HTTP/1.1 200"), "{}", first_line(&r));
-    let r = post_game("/login", "Dave", "nope").await;
+    let r = post_game(addr, "/login", "Dave", "nope").await;
     assert!(r.starts_with("HTTP/1.1 401"), "{}", first_line(&r));
 
     // The token from login authorizes the game socket, and presence uses the
@@ -375,16 +374,25 @@ async fn admin_durable_token_is_minted_from_a_bearer_and_authorizes() {
 }
 
 #[tokio::test]
-async fn openapi_doc_is_served_without_auth() {
+async fn openapi_docs_are_served_without_auth() {
     let (addr, _dir) = start_server_with_admin().await;
 
-    // No bearer token required — it's how a client discovers the API.
+    // Admin host: no bearer token required — it's how a client discovers the API.
     let r = http(addr, &get("/admin/openapi.json", None)).await;
     assert!(r.starts_with("HTTP/1.1 200"), "{}", first_line(&r));
     let doc: serde_json::Value = serde_json::from_str(body_of(&r)).unwrap();
     assert_eq!(doc["openapi"], "3.0.3");
     assert!(doc["paths"]["/admin/login"]["post"].is_object());
     assert!(doc["paths"]["/admin/stats"]["get"].is_object());
+
+    // Game host: the player-auth document.
+    let request =
+        format!("GET /openapi.json HTTP/1.1\r\nHost: {GAME_HOST}\r\nConnection: close\r\n\r\n");
+    let r = http(addr, &request).await;
+    assert!(r.starts_with("HTTP/1.1 200"), "{}", first_line(&r));
+    let doc: serde_json::Value = serde_json::from_str(body_of(&r)).unwrap();
+    assert!(doc["paths"]["/login"]["post"].is_object());
+    assert!(doc["paths"]["/register"]["post"].is_object());
 }
 
 fn first_line(response: &str) -> &str {

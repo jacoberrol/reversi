@@ -10,8 +10,10 @@ use serde::{Deserialize, Serialize};
 
 /// A Reversi in-game action. Rides inside the netplay `Game` payload.
 ///
-/// Passes are never sent: both clients derive forced passes locally. Internally
-/// tagged (`{"type":"Move","square":19}`) to match the netplay envelope's shape.
+/// Passes are never sent: both clients derive forced passes locally. Leaving a
+/// game isn't a message either — the server reports a departed opponent as
+/// `OpponentLeft`. Internally tagged (`{"type":"Move","square":19}`) to match
+/// the netplay envelope's shape.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum GameMsg {
@@ -19,8 +21,6 @@ pub enum GameMsg {
     Move { square: u8 },
     /// Start a new game (both sides reset).
     Restart,
-    /// Concede the game.
-    Resign,
 }
 
 /// Serialize a message into an opaque netplay payload.

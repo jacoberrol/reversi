@@ -160,8 +160,8 @@ fn sha256_hex(s: &str) -> String {
     to_hex(&Sha256::digest(s.as_bytes()))
 }
 
-/// Create an admin session valid for `ttl_hours`, returning the raw bearer token
-/// (only its sha256 is stored).
+/// Create a session (player or admin) valid for `ttl_hours`, returning the raw
+/// bearer token (only its sha256 is stored).
 pub async fn create_session(
     pool: &SqlitePool,
     user_id: i64,
@@ -187,29 +187,13 @@ pub async fn create_session(
     Ok(token)
 }
 
-/// The `(user_id, role)` a bearer token authorizes, or `None` if unknown/expired.
-/// Callers that only need the role can ignore the id; the id lets an authenticated
-/// caller mint a fresh session for the same user.
+/// The account a bearer token authorizes: `(user_id, role, name)`, or `None` if
+/// the token is unknown or expired. Joins the session to its user so the caller
+/// gets the real display name — the client never supplies it.
 ///
 /// Validation is a **pure read**: an expired token is never honored (the query
 /// filters on `expires_at`), but the dead row is left in place — reclaiming it is
 /// an operator action ([`prune_expired_sessions`]), not something every request pays for.
-pub async fn session_identity(
-    pool: &SqlitePool,
-    token: &str,
-) -> Result<Option<(i64, Role)>, sqlx::Error> {
-    let row: Option<(i64, String)> = sqlx::query_as(
-        "SELECT user_id, role FROM sessions WHERE token_hash = ? AND expires_at > datetime('now')",
-    )
-    .bind(sha256_hex(token))
-    .fetch_optional(pool)
-    .await?;
-    Ok(row.map(|(id, role)| (id, Role::from_db(&role))))
-}
-
-/// The account a bearer token authorizes for gameplay: `(user_id, role, name)`,
-/// or `None` if the token is unknown or expired. Joins the session to its user so
-/// the caller gets the real display name — the client never supplies it.
 pub async fn session_account(
     pool: &SqlitePool,
     token: &str,
@@ -225,7 +209,7 @@ pub async fn session_account(
 }
 
 /// Delete every session whose TTL has passed, returning how many were removed.
-/// Because [`session_identity`] never honors an expired token, this only reclaims
+/// Because [`session_account`] never honors an expired token, this only reclaims
 /// storage — it's an operator action (the `prune-tokens` subcommand), deliberately
 /// kept off the request path rather than run on a timer or on every lookup.
 pub async fn prune_expired_sessions(pool: &SqlitePool) -> Result<u64, sqlx::Error> {
@@ -309,15 +293,15 @@ mod tests {
 
         let token = create_session(&pool, id, role, 24).await.unwrap();
         assert_eq!(
-            session_identity(&pool, &token).await.unwrap(),
-            Some((id, Role::Admin))
+            session_account(&pool, &token).await.unwrap(),
+            Some((id, Role::Admin, "root".to_string()))
         );
-        assert_eq!(session_identity(&pool, "not-a-token").await.unwrap(), None);
+        assert_eq!(session_account(&pool, "not-a-token").await.unwrap(), None);
 
         // An already-expired session is never honored (validation filters on TTL),
         // even though the row still exists until an operator prunes it.
         let expired = create_session(&pool, id, role, -1).await.unwrap();
-        assert_eq!(session_identity(&pool, &expired).await.unwrap(), None);
+        assert_eq!(session_account(&pool, &expired).await.unwrap(), None);
     }
 
     #[tokio::test]
@@ -336,8 +320,8 @@ mod tests {
         // Only the two expired rows are reclaimed; the live token still works.
         assert_eq!(prune_expired_sessions(&pool).await.unwrap(), 2);
         assert_eq!(
-            session_identity(&pool, &live).await.unwrap(),
-            Some((id, Role::Admin))
+            session_account(&pool, &live).await.unwrap(),
+            Some((id, Role::Admin, "root".to_string()))
         );
         // Idempotent: nothing left to prune.
         assert_eq!(prune_expired_sessions(&pool).await.unwrap(), 0);

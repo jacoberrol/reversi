@@ -1,56 +1,35 @@
-//! WebSocket authorization — the seam, not the mechanism.
+//! WebSocket authorization: validate the bearer token a client presents in
+//! `Hello` and resolve it to an account.
 //!
-//! Gameplay auth is now token-based: the client obtains a bearer token from the
-//! REST auth endpoints ([`crate::player`]) and presents it in `Hello`. The relay
-//! depends only on *"is this token valid, and for which account/role?"*, never on
-//! how the token was obtained. [`Authenticator::verify`] runs after the
-//! protocol-version check and before the client joins the lobby; on failure the
-//! connection is rejected. [`DbAuth`] looks the session up in the store. A
-//! different token-issuing scheme (platform attestation, OAuth) can reuse this
-//! trait unchanged — it only ever hands the socket a token.
+//! Credentials never touch the socket — players log in / register over REST
+//! ([`crate::player`]) for a token, and the relay only asks "does this token
+//! name a live session, and for which account?". That REST boundary is the auth
+//! seam now: a new scheme (attestation, OAuth) would change how tokens are
+//! *minted*, while the socket contract stays "present a valid token". (An
+//! earlier design kept an `Authenticator` trait here so credential-checking
+//! implementations could swap behind the socket; token-based auth made the
+//! trait ceremony with a single implementation, so it was removed.)
 
 use sqlx::SqlitePool;
 
 use crate::store::{self, Role};
 
-/// What `verify` returns on success: the account's authorization role (which
-/// gates nothing on the game socket today, but travels with the identity) and its
-/// display name, derived from the token — never from client-supplied input.
+/// The account behind a validated token.
 #[derive(Clone, Debug)]
 pub struct Identity {
+    /// Kept deliberately although nothing on the game socket reads it today:
+    /// it travels with the identity so a role-gated gameplay feature can use it
+    /// without touching the auth path. (RBAC currently matters only on the
+    /// admin REST surface.)
     pub role: Role,
+    /// The account's display name — from the database, never from the client.
     pub name: String,
 }
 
-/// Why gameplay authorization failed. The message is sent to the client before
-/// closing the socket. Registration/login errors live on the REST side now; the
-/// socket only ever rejects a missing, invalid, or expired token.
-#[derive(Clone, Copy, Debug)]
-pub enum AuthError {
-    /// The token was absent, unknown, or expired.
-    Unauthorized,
-}
+/// Sent to the client when its token is missing, unknown, or expired.
+pub const UNAUTHORIZED_MESSAGE: &str = "invalid or expired session token — log in again";
 
-impl AuthError {
-    pub fn message(self) -> &'static str {
-        match self {
-            AuthError::Unauthorized => "invalid or expired session token — log in again",
-        }
-    }
-}
-
-/// Minimum length for a self-registered password (enforced by the REST register
-/// handler; kept here as the one source of truth for the account policy).
-pub const MIN_PASSWORD_LEN: usize = 8;
-
-/// Authorizes a connecting client from the bearer token in its `Hello`. Async
-/// because the DB-backed implementation looks the session up.
-#[async_trait::async_trait]
-pub trait Authenticator: Send + Sync {
-    async fn verify(&self, token: &str) -> Result<Identity, AuthError>;
-}
-
-/// Token-validating authenticator: the `Hello` token must name a live session.
+/// Token validator for the game socket.
 pub struct DbAuth {
     pool: SqlitePool,
 }
@@ -59,14 +38,14 @@ impl DbAuth {
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }
-}
 
-#[async_trait::async_trait]
-impl Authenticator for DbAuth {
-    async fn verify(&self, token: &str) -> Result<Identity, AuthError> {
+    /// The identity a bearer token authorizes, or `None` if the token names no
+    /// live session (the relay rejects the connection with
+    /// [`UNAUTHORIZED_MESSAGE`]).
+    pub async fn verify(&self, token: &str) -> Option<Identity> {
         match store::session_account(&self.pool, token).await {
-            Ok(Some((_, role, name))) => Ok(Identity { role, name }),
-            Ok(None) | Err(_) => Err(AuthError::Unauthorized),
+            Ok(Some((_, role, name))) => Some(Identity { role, name }),
+            Ok(None) | Err(_) => None,
         }
     }
 }

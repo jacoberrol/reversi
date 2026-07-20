@@ -83,7 +83,8 @@ Player auth is REST on the **game host** (same host/port as the gameplay
 WebSocket, so no extra DNS or proxy config): `POST /login` and `POST /register`
 with `{"name": "...", "password": "..."}` return a session token, which the
 client then presents on the WebSocket. The proxy already forwards HTTP to the
-port, so these need no proxy change.
+port, so these need no proxy change. `GET /openapi.json` on the game host
+describes these endpoints (the admin host has its own at `/admin/openapi.json`).
 
 ## Triggering a deploy
 

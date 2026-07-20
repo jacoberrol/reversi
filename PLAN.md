@@ -443,3 +443,16 @@ Record notable plan/scope changes here so the "why" survives.
   new row id. Because the protocol change breaks the client, server + protocol + client landed in one
   PR to keep `main` green. Tested: player REST status codes, WS token accept/reject, and a
   `netplay-client` integration test hitting a real relay.
+- 2026-07-19 — **Cleanup pass** (full dead-code/duplication/doc audit after stages 11–13). Removed:
+  the `Authenticator` trait + `AuthError` (single impl, no injection point — `serve` hardcoded
+  `DbAuth`; the relay now calls `DbAuth::verify → Option<Identity>` directly and the auth *seam* is
+  the REST layer; `async-trait` dep dropped; DESIGN §9 revised), `store::session_identity` (subsumed
+  by `session_account`), and the never-sent `GameMsg::Resign`. Deduplicated: a shared `rest` module
+  (`Credentials`, `read_json_body[_or_default]`, `token_response`, one `SESSION_TTL_HOURS`/`MAX_BODY`)
+  now backs both `admin` and `player`; `login_and_connect` routes through `connect`'s io-thread;
+  presence-status and raw-HTTP test helpers unified. Kept deliberately (documented in-code):
+  `Identity.role` and the client SDK's admin functions (forward-looking surface, no in-repo consumer).
+  Hardening: registration names capped at 32 chars. Docs: game host now serves `GET /openapi.json`
+  (player auth); admin OpenAPI gained the missing 400/500 codes (tests pin the full status surface);
+  fixed stale comments describing pre-Stage-13 behavior (`--name`, WS credentials, "/schema",
+  "admin session"). `MIN_PASSWORD_LEN` moved to `player` (where it's enforced).

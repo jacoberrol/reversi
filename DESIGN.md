@@ -151,10 +151,12 @@ Rust server on a cloud VM. We build the real topology now and stage toward that.
     `GET /admin/openapi.json` (**unauthenticated** — a client can't be asked for a token to learn how
     to get one, and the doc holds no secrets) for discovery. We dropped the earlier WS-side `/schema`
     + `/asyncapi.json` docs: with the control surface now genuinely REST, OpenAPI is the fitting
-    standard. The OpenAPI document is **hand-written** (`openapi.rs`), not derived — five endpoints
-    don't justify re-adding the `schemars`/derive machinery we removed, and a literal sits next to the
-    routes it describes. Kept in sync with the routes and `netplay-protocol` types by hand (a test
-    asserts every route appears).
+    standard. The OpenAPI documents are **hand-written** (`openapi.rs`), not derived — a handful of
+    endpoints doesn't justify re-adding the `schemars`/derive machinery we removed, and a literal sits
+    next to the routes it describes. Kept in sync with the routes and `netplay-protocol` types by hand
+    (tests pin every route and the full status-code surface). The game host serves its own doc at
+    `GET /openapi.json` covering player auth (`/login`, `/register`), reusing the shared schema
+    components so the two documents can't drift.
 - **The winit loop stays synchronous; networking uses a runtime off to the side.** The relay
   (`netplay-server`) uses tokio (per-connection tasks + an in-memory lobby actor). The client
   runs its WebSocket on a **single-thread tokio runtime confined to a dedicated network thread**,
@@ -179,15 +181,19 @@ can use, split into `netplay-protocol` / `netplay-server` / `netplay-client`. Th
   player type (Reversi: seat 0 = Black). Keeps the relay game-agnostic.
 - Stays a workspace-internal crate (no separate repo / published crate until a second consumer
   justifies the versioning overhead).
-- **Auth is a seam (Stage 8B; token-based since Stage 13).** Gameplay auth is split like the admin
-  API: a client authenticates over **REST** (`POST /login`/`/register` on the game host → a bearer
-  token) and then presents that **token** in the WebSocket `Hello`. The relay's `Authenticator::verify`
-  runs before the client joins the lobby and only validates the token (a session lookup — no argon2 on
-  the socket path); the account's display name and role come from the token, never from the client.
-  This moved the expensive credential check off every connect and out of the envelope. The credential
+- **Auth is a seam (Stage 8B; token-based since Stage 13; the seam is the REST layer).** Gameplay
+  auth is split like the admin API: a client authenticates over **REST** (`POST /login`/`/register`
+  on the game host → a bearer token) and then presents that **token** in the WebSocket `Hello`. The
+  relay validates the token before the client joins the lobby (a session lookup — no argon2 on the
+  socket path); the account's display name and role come from the token, never from the client. This
+  moved the expensive credential check off every connect and out of the envelope. The credential
   *shape* (`{name, password}`, or an attestation blob later) now lives entirely at the REST layer, so
   a new scheme changes only that handler — the socket contract is uniformly "present a valid token."
   Earlier (Stage 8B–11) the credential rode opaquely inside `Hello` itself; REST auth superseded that.
+  **Revised (cleanup pass):** the original `Authenticator` trait was removed — once tokens were the
+  only socket credential it had a single implementation and no injection point (`serve` constructed
+  it internally), i.e. indirection without a seam. The relay calls `DbAuth` (a session lookup)
+  directly; the *swap point* for a future auth scheme is the REST handler that mints sessions.
 - **Rate limiting (Stage 8C, done).** Server-side, before the lobby, drop-and-log: a handshake
   timeout, per-IP concurrency + new-connection rate, a per-connection inbound message bucket, and a
   lobby player cap. Tunable consts in `netplay-server::limits`; auth and rate-limit are separate
