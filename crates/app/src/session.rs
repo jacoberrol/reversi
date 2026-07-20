@@ -207,12 +207,8 @@ impl Session {
                 NetEvent::Presence(players) => {
                     self.lobby.me = self.login.name.clone();
                     self.login.connecting = false;
+                    self.lobby.status = presence_status(&players);
                     self.lobby.players = players;
-                    self.lobby.status = if self.lobby.players.is_empty() {
-                        "Waiting for others to join\u{2026}".to_string()
-                    } else {
-                        String::new()
-                    };
                     self.screen = Screen::Lobby;
                 }
                 NetEvent::Error(message) => self.login_error(message),
@@ -227,12 +223,8 @@ impl Session {
         }
         match event {
             NetEvent::Presence(players) => {
+                self.lobby.status = presence_status(&players);
                 self.lobby.players = players;
-                self.lobby.status = if self.lobby.players.is_empty() {
-                    "Waiting for others to join\u{2026}".to_string()
-                } else {
-                    String::new()
-                };
             }
             NetEvent::Invited { from, name } => {
                 self.lobby.incoming = Some((from, name));
@@ -260,9 +252,6 @@ impl Session {
                 Some(GameMsg::Restart) => {
                     self.animator.clear();
                     self.game.restart();
-                }
-                Some(GameMsg::Resign) => {
-                    self.ended = Some(EndReason::OpponentLeft);
                 }
                 None => {} // ignore a malformed payload
             },
@@ -379,5 +368,15 @@ impl Session {
 impl Default for Session {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// The lobby status line for a presence list: a hint while it's empty, cleared
+/// once other players are visible.
+fn presence_status(players: &[netplay_protocol::PlayerInfo]) -> String {
+    if players.is_empty() {
+        "Waiting for others to join\u{2026}".to_string()
+    } else {
+        String::new()
     }
 }

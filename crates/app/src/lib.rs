@@ -5,7 +5,8 @@
 //!
 //! No args launches single-player vs the AI. `--online` connects to the public
 //! relay ([`DEFAULT_RELAY_URL`]); `--server URL` overrides it with a specific
-//! relay (e.g. a local `ws://` server). `--name NAME` sets the display name.
+//! relay (e.g. a local `ws://` server). The display name comes from the account
+//! you log in with (or register) on the title screen.
 
 pub mod anim;
 pub mod config;

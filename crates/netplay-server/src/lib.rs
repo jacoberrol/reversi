@@ -13,12 +13,13 @@ pub mod limits;
 pub mod lobby;
 pub mod openapi;
 pub mod player;
+mod rest;
 pub mod store;
 
 use std::convert::Infallible;
 use std::sync::{Arc, Mutex};
 
-use auth::{Authenticator, DbAuth};
+use auth::DbAuth;
 use bytes::Bytes;
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
@@ -49,7 +50,7 @@ type BoxError = Box<dyn std::error::Error + Send + Sync>;
 /// and admin sessions. Runs the lobby task internally; never returns normally.
 pub async fn serve(listener: TcpListener, pool: SqlitePool, admin_host: String) {
     let admin_host: Arc<str> = Arc::from(admin_host.to_ascii_lowercase());
-    let auth: Arc<dyn Authenticator> = Arc::new(DbAuth::new(pool.clone()));
+    let auth = Arc::new(DbAuth::new(pool.clone()));
     let (lobby_tx, lobby_rx) = mpsc::channel(64);
     tokio::spawn(lobby::run(lobby_rx));
     let limiter = Arc::new(Mutex::new(IpLimiter::new()));
@@ -86,7 +87,7 @@ pub async fn serve(listener: TcpListener, pool: SqlitePool, admin_host: String) 
 struct Conn {
     pool: SqlitePool,
     lobby_tx: mpsc::Sender<LobbyCmd>,
-    auth: Arc<dyn Authenticator>,
+    auth: Arc<DbAuth>,
     admin_host: Arc<str>,
 }
 
@@ -168,7 +169,7 @@ fn request_host(req: &Request<Incoming>) -> Option<String> {
 async fn relay(
     ws: WsStream,
     lobby_tx: mpsc::Sender<LobbyCmd>,
-    auth: Arc<dyn Authenticator>,
+    auth: Arc<DbAuth>,
 ) -> Result<(), BoxError> {
     let (sink, mut source) = ws.split();
     let (outbox, out_rx) = mpsc::channel::<ServerMsg>(32);
@@ -199,14 +200,14 @@ async fn relay(
     // The token (from REST login/register) must name a live session; the account's
     // display name comes from it, never from the client.
     let name = match auth.verify(&token).await {
-        Ok(identity) => {
+        Some(identity) => {
             println!("authorized (account {})", identity.name);
             identity.name
         }
-        Err(e) => {
+        None => {
             let _ = outbox
                 .send(ServerMsg::Error {
-                    message: e.message().to_string(),
+                    message: auth::UNAUTHORIZED_MESSAGE.to_string(),
                 })
                 .await;
             return Ok(());

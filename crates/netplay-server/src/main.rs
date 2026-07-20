@@ -1,9 +1,9 @@
 //! Netplay relay server binary. Binds an address and serves connections.
 //!
-//! Gameplay is accounts-only WebSocket: clients log in (or self-register) with a
-//! name + password (argon2id). The admin REST API is served on `NETPLAY_ADMIN_HOST`
-//! (default `admin.netplay.oliverj.network`); seed the admin with
-//! `NETPLAY_ADMIN="name:password"`.
+//! Players log in / register over REST (argon2id) for a bearer token, then
+//! present it in the WebSocket `Hello`. The admin REST API is served on
+//! `NETPLAY_ADMIN_HOST` (default `admin.netplay.oliverj.network`); seed the
+//! admin with `NETPLAY_ADMIN="name:password"`.
 //!
 //! Persistent state lives in a SQLite database at `NETPLAY_DB` (default
 //! `netplay.db`); it's created and migrated on startup.
@@ -19,7 +19,7 @@ async fn main() {
     let db_path = std::env::var("NETPLAY_DB").unwrap_or_else(|_| "netplay.db".to_string());
 
     // `prune-tokens`: reclaim expired admin sessions, then exit. An operator
-    // action — validation never prunes (see store::session_identity), so dead
+    // action — validation never prunes (see store::session_account), so dead
     // rows accumulate until someone runs this against the DB.
     if arg.as_deref() == Some("prune-tokens") {
         let pool = store::open(&db_path)
